@@ -171,6 +171,7 @@ export default function Programacion({ partidos, equipos }) {
                       {/* Logos + marcador (mismos tamaños) */}
                       <div className="logos-row" style={{ gap: 8 }}>
                         <img
+				loading="lazy" decoding="async" fetchpriority="low"
                           src={logoFromTeamId(p.home_team)}
                           alt={`Logo ${nombreEquipo(p.home_team)}`}
                           className="logo-img"
@@ -188,6 +189,7 @@ export default function Programacion({ partidos, equipos }) {
                           {haveScore ? `${p.home_score} - ${p.away_score}` : "VS"}
                         </div>
                         <img
+				loading="lazy" decoding="async" fetchpriority="low"
                           src={logoFromTeamId(p.away_team)}
                           alt={`Logo ${nombreEquipo(p.away_team)}`}
                           className="logo-img"
@@ -268,3 +270,4 @@ Programacion.propTypes = {
   partidos: PropTypes.array.isRequired,
   equipos: PropTypes.array.isRequired,
 };
+
