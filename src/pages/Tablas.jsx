@@ -176,3 +176,4 @@ Tablas.propTypes = {
   rightWrapRef: PropTypes.object.isRequired,
   commonHeight: PropTypes.oneOfType([PropTypes.number, PropTypes.oneOf([null])]),
 };
+
