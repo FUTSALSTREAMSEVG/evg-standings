@@ -1,0 +1,556 @@
+/* ====== Variables y resets ====== */
+:root{
+  --brand-orange: #f17f26;
+  --brand-orange-dark: #d9691d;
+  --brand-black:  #0b0b0b;
+  --brand-white:  #ffffff;
+  --brand-green:  #3fa34d;
+  --brand-red:    #d64a4a;
+}
+
+*{ box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body{
+  margin: 0;
+  color: var(--brand-white);
+  /* Fondo con textura + gradientes (SIN body::after para no cubrir clics) */
+  background:
+    url('/decor/pattern-noise.png') repeat,
+    radial-gradient(1200px 700px at 10% -10%, rgba(241,127,38,0.18), transparent 60%),
+    radial-gradient(1000px 600px at 110% 0%, rgba(241,127,38,0.16), transparent 55%),
+    linear-gradient(180deg, #0a0a0a 0%, #0b0b0b 40%, #000000 100%);
+  background-blend-mode: normal, overlay, overlay, normal;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji", sans-serif;
+}
+
+ul{ list-style: none; padding: 0; margin: 0; }
+button{ cursor: pointer; }
+img{ display: block; }
+
+/* ====== App wrapper ====== */
+.App{ text-align: center; min-height: 100vh; }
+.app-bg{}
+
+/* ====== Header ====== */
+.app-header{
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  margin-bottom: 0;
+  position: relative; /* para la banda decorativa */
+}
+.app-header::after{
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: -10px;
+  height: 110px;
+  background: url('/decor/banner-desktop.webp') center/cover no-repeat;
+  opacity: .85;
+  border-bottom: 1px solid rgba(241,127,38,0.35);
+  z-index: 0;
+  pointer-events: none;
+}
+@media (max-width: 720px){
+  .app-header::after{
+    background-image: url('/decor/banner-mobile.webp');
+    height: 90px;
+  }
+}
+.app-header > *{ position: relative; z-index: 2; }
+.brand-line{
+  display: inline-flex; align-items: center; gap: 8px; justify-content: center; white-space: nowrap; flex-wrap: nowrap;
+}
+.brand-logo{ width: 42px; height: 42px; object-fit: contain; display: inline-block; vertical-align: middle; }
+.brand-title{ margin: 0; letter-spacing: .5px; display: inline-block; vertical-align: middle; color: var(--brand-white); }
+
+/* ====== Tabs ====== */
+.tabs-nav{
+  display: flex; gap: 8px; justify-content: center; align-items: center;
+  padding: 10px 8px; border-bottom: 1px solid rgba(255,255,255,0.06);
+  margin-bottom: 8px; position: relative; z-index: 1;
+}
+/* Inactivas: blanco 90% con letras negras */
+.tab-btn{
+  padding: 10px 16px;
+  border-radius: 999px;
+  border: 1px solid #222;
+  background: rgba(255,255,255,0.90);
+  color: #111;
+  font-weight: 800;
+  letter-spacing: .2px;
+  text-transform: uppercase;
+}
+.tab-btn:hover{ filter: brightness(0.98); }
+/* Activa: naranjado oscuro con texto blanco */
+.tab-btn.active{
+  border-color: #8a3c0d;
+  background: var(--brand-orange-dark);
+  color: var(--brand-white);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.08);
+}
+
+/* ====== Grilla de tablas ====== */
+.tables-grid{
+  width: 100%; max-width: 100%;
+  display: grid; gap: 10px; align-items: start; justify-items: stretch;
+  padding-inline: 8px; margin: 0 auto; margin-top: 4px;
+  overflow-x: hidden;
+}
+.panel{
+  position: relative; overflow: hidden; width: 100%;
+  background:
+    radial-gradient(800px 400px at 10% -10%, rgba(241,127,38,0.10), transparent 60%),
+    linear-gradient(180deg, rgba(255,255,255,0.03), rgba(0,0,0,0.45));
+  border: 1px solid rgba(255,255,255,0.24);
+  border-radius: 12px; padding: 8px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.07), 0 8px 24px rgba(0,0,0,0.32);
+  box-sizing: border-box;
+}
+.panel::before{
+  content:""; position:absolute; inset: 0;
+  background:
+    radial-gradient(600px 280px at 50% -20%, rgba(241,127,38,0.10), transparent 60%),
+    url('/decor/panel-glow.png') center/cover no-repeat;
+  opacity: .22; pointer-events: none; z-index: 1;
+}
+.panel > *{ position: relative; z-index: 2; }
+
+/* Títulos de sección (GRUPO A/B, etc) */
+.panel h2{
+  margin: 0 0 8px 0; color: var(--brand-white);
+  text-align: center; text-transform: uppercase; letter-spacing: .6px;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.55), 0 0 10px rgba(241,127,38,0.25), 0 0 22px rgba(241,127,38,0.12);
+  position: relative; display: flex; flex-direction: column; align-items: center; width: 100%;
+}
+.panel h2::after{
+  content: ""; display: block; height: 3px; width: 120px; margin: 6px auto 2px auto; border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(241,127,38,0.95), transparent);
+}
+
+/* ====== Tablas (efecto cabecera más “bonito”) ====== */
+table.compacta{
+  width: 100%; table-layout: fixed; border-collapse: collapse;
+  background:
+    radial-gradient(600px 300px at -10% -10%, rgba(241,127,38,0.14), transparent 60%),
+    linear-gradient(180deg, rgba(0,0,0,0.55), rgba(0,0,0,0.34));
+  border: 1px solid rgba(0,0,0,0.90);
+  border-radius: 10px; overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.10), 0 4px 14px rgba(0,0,0,0.30);
+  backdrop-filter: saturate(1.08);
+}
+
+/* CABECERA con efecto (no plana) */
+table.compacta thead th{
+  padding: 9px 6px;
+  text-transform: uppercase; letter-spacing: .35px;
+  color: var(--brand-white); font-weight: 900; font-size: 13px;
+  /* capas: base oscura + esmalte naranja + brillo sutil + líneas */
+  background:
+    linear-gradient(180deg, rgba(241,127,38,0.22), rgba(241,127,38,0.10)), /* esmalte naranja */
+    linear-gradient(180deg, #1b1b1b, #0f0f0f),                              /* base */
+    repeating-linear-gradient(90deg, rgba(255,255,255,0.06) 0 1px, transparent 1px 3px); /* micro-líneas */
+  border-bottom: 2px solid #000;
+  border-top: 1px solid #000;
+  border-right: 1px solid #000;
+  box-shadow:
+    inset 0 -2px 0 rgba(241,127,38,0.50), /* línea incandescente inferior */
+    inset 0  1px 0 rgba(255,255,255,0.08);/* línea de brillo superior */
+}
+table.compacta thead th:first-child{
+  border-left: 1px solid #000;
+}
+
+/* Fondo SOLO en tbody */
+table.compacta tbody{
+  background:
+    radial-gradient(900px 400px at 110% 20%, rgba(241,127,38,0.12), transparent 55%),
+    linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.00));
+  position: relative;
+}
+
+/* Marca de agua a color en POS y STATS */
+table.compacta.compacta--pos tbody::before{
+  content: ""; position: absolute; top: 0; bottom: 0; right: 0; left: 64px;
+  background: url('/logo.png') center/20% no-repeat; opacity: 0.20; pointer-events: none;
+}
+table.compacta.compacta--stats tbody::before{
+  content: ""; position: absolute; top: 0; bottom: 0; right: 0; left: 64px;
+  background: url('/logo.png') center/160px no-repeat; opacity: 0.10; pointer-events: none;
+}
+
+/* Celdas y líneas */
+table.compacta tbody td{
+  padding: 6px 6px; color: var(--brand-white); font-size: 14px; line-height: 1.15;
+  border-bottom: 1px solid rgba(0,0,0,0.85);
+}
+table.compacta td + td, table.compacta th + th{
+  border-left: 1px solid rgba(0,0,0,0.85);
+}
+
+/* Filas (espejo) */
+table.compacta tbody tr{
+  background: linear-gradient(90deg, rgba(241,127,38,0.16), rgba(241,127,38,0.06) 50%, rgba(241,127,38,0.16));
+}
+table.compacta tbody tr:nth-child(even){
+  background: linear-gradient(90deg, rgba(255,255,255,0.12), rgba(255,255,255,0.04) 50%, rgba(255,255,255,0.12));
+}
+table.compacta tbody tr:hover{
+  background: linear-gradient(90deg, rgba(241,127,38,0.30), rgba(241,127,38,0.12) 50%, rgba(241,127,38,0.30));
+}
+
+/* Col POS más oscura */
+table.compacta thead th:first-child,
+table.compacta tbody td:first-child{
+  background-color: rgba(0,0,0,0.80);
+}
+
+td.td-equipo{ white-space: normal; overflow-wrap: anywhere; }
+img.escudo{ width: 24px; height: 24px; object-fit: contain; }
+
+/* Click al equipo (detalle) */
+.td-equipo-link{ cursor: pointer; color: var(--brand-orange); font-weight: 700; text-shadow: 0 1px 0 rgba(0,0,0,0.45); }
+/* ====== Tarjetas públicas / Programación ====== */
+.cards-grid{
+  display: grid; grid-template-columns: minmax(300px, 760px);
+  justify-content: center; justify-items: stretch;
+  width: 100%; row-gap: 10px; margin-inline: auto;
+}
+.match-card{
+  background:
+    radial-gradient(500px 260px at 20% -20%, rgba(241,127,38,0.12), transparent 60%),
+    linear-gradient(180deg, rgba(0,0,0,0.60) 0%, rgba(0,0,0,0.82) 100%);
+  border: 1px solid rgba(241,127,38,0.55);
+  box-shadow: 0 10px 24px rgba(0,0,0,0.42), inset 0 0 0 1px rgba(255,255,255,0.05);
+  padding: 12px 16px 16px; border-radius: 14px; margin: 10px 0;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms;
+  display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px;
+  width: 100%; max-width: 100%; align-self: center; color: var(--brand-white);
+  position: relative; overflow: hidden; z-index: 0; isolation: isolate;
+}
+.match-card.hoverable:hover{ transform: translateY(-2px); box-shadow: 0 12px 22px rgba(0,0,0,0.5); border-color: var(--brand-orange); }
+.match-card::before{
+  content:""; position: absolute; inset: 0;
+  background: url('/decor/field-grid.svg') center/120% no-repeat; opacity: .40; z-index: -1; pointer-events: none;
+}
+
+.match-badges{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center; margin-bottom: 2px; }
+.badge{ display: inline-block; font-size: 12px; padding: 2px 10px; border-radius: 999px; letter-spacing: .3px; line-height: 1.6; user-select: none; }
+.badge-time{ color: var(--brand-white); border: 1px solid #444; background: rgba(255,255,255,0.06); font-weight: 600; }
+.badge-group.pending{ color: #ffe3e3; border: 1px solid var(--brand-red); background: rgba(214,74,74,0.22); font-weight: 800; }
+.badge-group.played{ color: #dff7e4; border: 1px solid var(--brand-green); background: rgba(63,163,77,0.18); font-weight: 800; }
+
+.logos-row{ display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; justify-items: center; column-gap: 20px; width: 100%; margin-top: 2px; }
+.logo-img{ width: 88px; height: 88px; object-fit: contain; background: transparent; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4)); }
+.big-score{
+  font-size: 36px; font-weight: 900; letter-spacing: 1px;
+  padding: 6px 12px; border-radius: 10px;
+  background: rgba(241,127,38,0.22); border: 1px solid rgba(241,127,38,0.65); color: #ffd7b5;
+  min-width: 92px; text-align: center; line-height: 1.1;
+}
+
+.names-row{ display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; justify-items: center; column-gap: 14px; font-size: 16px; width: 100%; margin-top: 4px; }
+.team-name{ color: var(--brand-white); font-weight: 700; text-shadow: 0 1px 0 rgba(0,0,0,0.3); }
+.vs{ color: #cfcfcf; opacity: .95; font-weight: 700; text-shadow: 0 1px 0 rgba(0,0,0,0.3); }
+
+/* ====== Programación: selector semana visible ====== */
+.section-programacion .week-picker-public{
+  display: flex; align-items: center; gap: 10px; justify-content: center;
+  margin: 10px auto 6px auto;
+}
+.week-label{
+  font-weight: 900; letter-spacing: .4px; text-transform: uppercase;
+  color: var(--brand-white);
+}
+.week-select-public{
+  appearance: none;
+  padding: 10px 14px; border-radius: 999px;
+  border: 2px solid var(--brand-orange-dark);
+  background: rgba(241,127,38,0.12);
+  color: var(--brand-white);
+  font-weight: 800; letter-spacing: .2px;
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(241,127,38,0.15);
+}
+.week-select-public:focus{ box-shadow: 0 0 0 4px rgba(241,127,38,0.28); }
+.section-title{ text-transform: uppercase; letter-spacing: .3px; }
+/* ====== Admin (mismo look & feel que tarjetas públicas) ====== */
+.admin-card{
+  /* Fondo y borde idénticos a .match-card (tarjetas públicas) */
+  background:
+    radial-gradient(500px 260px at 20% -20%, rgba(241,127,38,0.12), transparent 60%),
+    linear-gradient(180deg, rgba(0,0,0,0.60) 0%, rgba(0,0,0,0.82) 100%);
+  border: 1px solid rgba(241,127,38,0.55);
+  box-shadow: 0 10px 24px rgba(0,0,0,0.42), inset 0 0 0 1px rgba(255,255,255,0.05);
+  padding: 12px 16px; border-radius: 12px; margin: 8px 0;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms;
+  display: flex; flex-direction: column; gap: 8px; align-items: center; text-align: center;
+  width: 100%; max-width: 100%; align-self: center;
+}
+.admin-card.hoverable:hover{ transform: translateY(-2px); box-shadow: 0 8px 16px rgba(0,0,0,0.45); }
+
+/* Top/bottom rows de admin (se mantienen) */
+.admin-toprow{
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  justify-content: space-between; width: 100%;
+  background: linear-gradient(180deg, rgba(255,255,255,0.06), transparent);
+  padding: 6px 8px; border-radius: 8px;
+}
+.admin-badges{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.admin-badge{ display: inline-block; font-size: 12px; padding: 2px 10px; border-radius: 999px; letter-spacing: .3px; line-height: 1.6; user-select: none; }
+.admin-badge-group{ color: #dff7e4; border: 1px solid var(--brand-green); background: linear-gradient(180deg, rgba(63,163,77,0.22), rgba(63,163,77,0.12)); text-shadow: 0 1px 0 rgba(0,0,0,0.45); font-weight: 800; }
+.admin-badge-time{ color: #151515; border: 1px solid #bbb; background: linear-gradient(180deg, #ffffff, #f1f1f1); text-shadow: none; font-weight: 700; }
+.admin-badge-match{
+  color: #ffe7d3; border: 1px solid rgba(241,127,38,0.7);
+  background: radial-gradient(250px 120px at -10% -20%, rgba(241,127,38,0.22), transparent 60%),
+             linear-gradient(180deg, rgba(241,127,38,0.28), rgba(241,127,38,0.16));
+  font-weight: 800; text-shadow: 0 1px 0 rgba(0,0,0,0.45);
+}
+.admin-bottomrow{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 16px; justify-content: center; text-shadow: 0 1px 0 rgba(0,0,0,0.5); font-weight: 700; }
+
+/* ====== Botones & campos ADMIN (más visibles, sin tocar markup) ====== */
+div[style*="max-height: 90vh"][style*="overflow-y: auto"][style*="border: 3px solid"] button{
+  border: 1px solid rgba(241,127,38,0.7);
+  background: radial-gradient(300px 140px at -10% -20%, rgba(241,127,38,0.25), transparent 60%),
+             linear-gradient(180deg, rgba(241,127,38,0.28), rgba(241,127,38,0.16));
+  color: var(--brand-white);
+  padding: 8px 14px; border-radius: 999px; font-weight: 800; letter-spacing: .2px;
+  transition: transform .12s ease, box-shadow .18s ease, filter .18s ease, background .18s ease;
+}
+div[style*="max-height: 90vh"][style*="overflow-y: auto"][style*="border: 3px solid"] button:hover{
+  transform: translateY(-1px);
+  box-shadow: 0 10px 18px rgba(0,0,0,0.45);
+  filter: saturate(1.08);
+}
+div[style*="max-height: 90vh"][style*="overflow-y: auto"][style*="border: 3px solid"] input{
+  background: rgba(255,255,255,0.06); border: 1px solid #333; color: var(--brand-white);
+  padding: 8px 10px; border-radius: 10px; outline: none;
+  transition: box-shadow .18s, border-color .18s, background .18s;
+}
+div[style*="max-height: 90vh"][style*="overflow-y: auto"][style*="border: 3px solid"] input:focus{
+  border-color: rgba(241,127,38,0.85); background: rgba(255,255,255,0.08); box-shadow: 0 0 0 3px rgba(241,127,38,0.25);
+}
+div[style*="max-height: 90vh"][style*="overflow-y: auto"][style*="border: 3px solid"] select{
+  appearance: none; background: #ffffff; color: #111; border: 1.5px solid rgba(241,127,38,0.85);
+  padding: 8px 12px; border-radius: 10px; font-weight: 700; outline: none;
+  transition: box-shadow .18s, border-color .18s, background .18s, color .18s;
+}
+div[style*="max-height: 90vh"][style*="overflow-y: auto"][style*="border: 3px solid"] select:focus{
+  box-shadow: 0 0 0 3px rgba(241,127,38,0.25);
+}
+
+/* === NUEVO: el contenedor del PANEL ADMIN usa el mismo fondo que .panel (tablas) === */
+div[style*="max-height: 90vh"][style*="overflow-y: auto"][style*="border: 3px solid"]{
+  background:
+    radial-gradient(800px 400px at 10% -10%, rgba(241,127,38,0.10), transparent 60%),
+    linear-gradient(180deg, rgba(255,255,255,0.03), rgba(0,0,0,0.45)) !important;
+  border: 1px solid rgba(255,255,255,0.24) !important;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.07), 0 8px 24px rgba(0,0,0,0.32);
+}
+
+/* ====== Selector de semana (público/admin) con CONTRASTE en opciones ====== */
+.week-select-public option,
+.week-select-admin option{
+  background: #0f0f0f;
+  color: #ffffff;
+}
+
+/* ====== “Ver:” más llamativo ====== */
+.week-label{
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background:
+    radial-gradient(200px 80px at -10% -30%, rgba(241,127,38,0.25), transparent 60%),
+    linear-gradient(180deg, rgba(241,127,38,0.28), rgba(241,127,38,0.16));
+  border: 1px solid rgba(241,127,38,0.7);
+  box-shadow: 0 6px 14px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.06);
+}
+
+/* Utilitarios */
+.center-max-900{ margin: 0 auto; max-width: 900px; text-align: center; }
+.mt-6{ margin-top: 6px; } .mt-8{ margin-top: 8px; } .mb-0{ margin-bottom: 0; }
+
+/* STATS centrado de escudos + ancho */
+table.compacta.compacta--stats th:nth-child(2),
+table.compacta.compacta--stats td:nth-child(2){ text-align: center; }
+table.compacta.compacta--stats td:nth-child(2) .escudo{ display: block; margin-inline: auto; }
+table.compacta.compacta--stats{ width: min(100%, 500px); margin-inline: auto; table-layout: fixed; }
+.panel:has(> table.compacta--stats){ max-width: 500px; margin-inline: auto; }
+
+/* Tipografía reforzada STATS (nombre + GF/GC) y POS (numéricas) */
+table.compacta.compacta--stats tbody td:nth-child(3),
+table.compacta.compacta--stats tbody td:nth-child(4){ font-weight: 800; }
+table.compacta.compacta--pos tbody td:nth-child(3),
+table.compacta.compacta--pos tbody td:nth-child(4),
+table.compacta.compacta--pos tbody td:nth-child(5),
+table.compacta.compacta--pos tbody td:nth-child(6),
+table.compacta.compacta--pos tbody td:nth-child(7),
+table.compacta.compacta--pos tbody td:nth-child(8),
+table.compacta.compacta--pos tbody td:nth-child(9),
+table.compacta.compacta--pos tbody td:nth-child(10),
+table.compacta.compacta--pos tbody td:nth-child(11){
+  position: relative; z-index: 1;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.70), 0 0 6px rgba(0,0,0,0.45), 0 0 14px rgba(0,0,0,0.35);
+  -webkit-text-stroke: 0.9px rgba(0,0,0,0.55); letter-spacing: .2px; font-weight: 800;
+}
+/* Mantén 3 columnas para que coincidan con logos-row (1fr auto 1fr) */
+.names-row.no-vs{
+  grid-template-columns: 1fr auto 1fr;
+  justify-items: center;   /* cada nombre centrado bajo su columna */
+  column-gap: 14px;
+}
+
+/* Oculta el 'vs' del centro pero deja el espacio del marcador grande */
+.names-row.no-vs .vs{
+  opacity: 0;              /* invisible */
+  /* Usa el mismo ancho mínimo que .big-score para que alinee exacto */
+  display: inline-block;
+  width: 92px;             /* si cambiaste .big-score, usa ese mismo min-width */
+  text-indent: -9999px;    /* (opcional) saca el texto del flujo visual */
+}
+
+/* ====== PANEL ADMIN: mismo fondo que .panel (tablas de posiciones) ====== */
+.admin-panel{
+  background:
+    radial-gradient(800px 400px at 10% -10%, rgba(241,127,38,0.10), transparent 60%),
+    linear-gradient(180deg, rgba(255,255,255,0.03), rgba(0,0,0,0.45));
+  border: 1px solid rgba(255,255,255,0.24) !important;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.07), 0 8px 24px rgba(0,0,0,0.32);
+}
+
+/* ====== TARJETA ADMIN: mismo look que las tarjetas públicas (.match-card) ====== */
+.admin-card{
+  background:
+    radial-gradient(1000px 200px at 50% -20%, rgba(241,127,38,0.6), transparent 30%),
+    linear-gradient(180deg, rgba(0,0,0,0.60) 0%, rgba(0,0,0,0.9) 0%);
+  border: 1px solid rgba(241,127,38,0.9);
+  box-shadow: 0 10px 24px rgba(0,0,0,0.42), inset 0 0 0 1px rgba(255,255,255,0.05);
+  padding: 12px 16px;
+  border-radius: 14px;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms;
+}
+.admin-card.hoverable:hover{
+  transform: translateY(-2px);
+  box-shadow: 0 12px 22px rgba(0,0,0,0.5);
+  border-color: #f17f26;
+}
+
+/* ====== Botones/inputs/select dentro del panel admin: más interactivos ====== */
+.admin-panel button{
+  border: 1px solid rgba(241,127,38,0.7);
+  background:
+    radial-gradient(300px 140px at -10% -20%, rgba(241,127,38,0.25), transparent 60%),
+    linear-gradient(180deg, rgba(241,127,38,0.28), rgba(241,127,38,0.16))important;
+  color: #fff;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-weight: 800;
+  letter-spacing: .2px;
+  transition: transform .12s ease, box-shadow .18s ease, filter .18s ease, background .18s ease;
+}
+.admin-panel button:hover{
+  transform: translateY(-1px);
+  box-shadow: 0 10px 18px rgba(0,0,0,0.45);
+  filter: saturate(1.08);
+}
+.admin-panel button:active{
+  transform: translateY(0);
+  filter: brightness(0.98);
+}
+
+.admin-panel input,
+.admin-panel select{
+  background: rgba(255,255,255,0.06);
+  border: 1px solid #333;
+  color: #fff;
+  padding: 8px 10px;
+  border-radius: 10px;
+  outline: none;
+  transition: box-shadow .18s, border-color .18s, background .18s, color .18s;
+}
+.admin-panel input:focus,
+.admin-panel select:focus{
+  border-color: rgba(241,127,38,0.85);
+  background: rgba(255,255,255,0.08);
+  box-shadow: 0 0 0 3px rgba(241,127,38,0.25);
+}
+
+/* Opcional: opciones del select con contraste (por si el sistema usa menú nativo claro) */
+.admin-panel select option{
+  background: #0f0f0f;
+  color: #ffffff;
+}
+
+/* ====== Badges / filas dentro de la tarjeta admin (ligero polish) ====== */
+.admin-toprow, .admin-midrow, .admin-bottomrow{
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.admin-toprow{
+  justify-content: space-between;
+  background: linear-gradient(180deg, rgba(255,255,255,0.06), transparent);
+  padding: 6px 8px; border-radius: 8px;
+}
+.admin-badges{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.admin-badge{ display: inline-block; font-size: 12px; padding: 2px 10px; border-radius: 999px; letter-spacing: .3px; line-height: 1.6; user-select: none; }
+
+.admin-badge-group{
+  color: #dff7e4;
+  border: 1px solid #3fa34d;
+  background: linear-gradient(180deg, rgba(63,163,77,0.22), rgba(63,163,77,0.12));
+  text-shadow: 0 1px 0 rgba(0,0,0,0.45);
+  font-weight: 800;
+}
+.admin-badge-time{
+  color: #151515;
+  border: 1px solid #bbb;
+  background: linear-gradient(180deg, #ffffff, #f1f1f1);
+  text-shadow: none;
+  font-weight: 700;
+}
+.admin-badge-match{
+  color: #ffe7d3;
+  border: 1px solid rgba(241,127,38,0.7);
+  background:
+    radial-gradient(250px 120px at -10% -20%, rgba(241,127,38,0.22), transparent 60%),
+    linear-gradient(180deg, rgba(241,127,38,0.28), rgba(241,127,38,0.16));
+  font-weight: 800;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.45);
+}
+/* === Landing (bienvenida) === */
+.landing{
+  padding: 16px 12px;
+  text-align: center;
+  margin-top: 8px; /* por si el banner del header solapa un poco */
+}
+.landing .section-title{
+  margin: 0 0 8px 0;
+}
+.landing-text{
+  color: #dddddd;
+  margin: 0 0 12px 0;
+}
+
+/* Botón de entrar en landing (mismo look que admin mejorado) */
+.landing-btn{
+  border: 1px solid rgba(241,127,38,0.7);
+  background:
+    radial-gradient(300px 140px at -10% -20%, rgba(241,127,38,0.25), transparent 60%),
+    linear-gradient(180deg, rgba(241,127,38,0.28), rgba(241,127,38,0.16));
+  color: #fff;
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-weight: 800;
+  letter-spacing: .2px;
+  transition: transform .12s, box-shadow .18s, filter .18s, background .18s;
+}
+.landing-btn:hover{
+  transform: translateY(-1px);
+  box-shadow: 0 10px 18px rgba(0,0,0,0.45);
+  filter: saturate(1.08);
+}
+.landing-btn:active{
+  transform: translateY(0);
+  filter: brightness(0.98);
+}
