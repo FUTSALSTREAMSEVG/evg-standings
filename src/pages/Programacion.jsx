@@ -14,7 +14,16 @@ export default function Programacion({ partidos, equipos }) {
       .replace(/\s+/g, "-");
 
   const nombreEquipo = (id) => (equipos || []).find((t) => t.id === id)?.name || "??";
-  const logoFromTeamId = (id) => `/logos/${slugify(nombreEquipo(id))}.png`;
+
+  // Preferimos .webp con fallback a .png
+  const logoFromTeamIdWebpFirst = (id) => {
+    const base = `/logos/${slugify(nombreEquipo(id))}`;
+    return `${base}.webp`; // probamos primero .webp
+  };
+  const pngFallbackFromTeamId = (id) => {
+    const base = `/logos/${slugify(nombreEquipo(id))}`;
+    return `${base}.png`;  // fallback si falla webp
+  };
 
   const ymdLocal = (dt) => {
     const d = new Date(dt);
@@ -103,7 +112,7 @@ export default function Programacion({ partidos, equipos }) {
         </h3>
       </div>
 
-      {/* DÍAS como columnas a todo ancho */}
+      {/* DÍAS */}
       <div
         className="days-grid"
         style={{
@@ -149,9 +158,16 @@ export default function Programacion({ partidos, equipos }) {
               >
                 {arr.map((p) => {
                   const haveScore = p.home_score != null && p.away_score != null;
+
+                  // URLs base
+                  const webpHome = logoFromTeamIdWebpFirst(p.home_team);
+                  const webpAway = logoFromTeamIdWebpFirst(p.away_team);
+                  const pngHome  = pngFallbackFromTeamId(p.home_team);
+                  const pngAway  = pngFallbackFromTeamId(p.away_team);
+
                   return (
                     <li key={p.id} className="match-card hoverable" style={{ padding: 8 }}>
-                      {/* Badges (mismo tamaño para todos) */}
+                      {/* Badges */}
                       <div
                         className="match-badges"
                         style={{
@@ -168,15 +184,23 @@ export default function Programacion({ partidos, equipos }) {
                         <span className="badge badge-time">{formatearHora(p.match_datetime)}</span>
                       </div>
 
-                      {/* Logos + marcador (mismos tamaños) */}
+                      {/* Logos + marcador */}
                       <div className="logos-row" style={{ gap: 8 }}>
                         <img
-				loading="lazy" decoding="async" fetchpriority="low"
-                          src={logoFromTeamId(p.home_team)}
+                          loading="lazy" decoding="async" fetchpriority="low"
+                          src={webpHome}
                           alt={`Logo ${nombreEquipo(p.home_team)}`}
                           className="logo-img"
-                          style={{ width: "clamp(36px, 7.5vw, 64px)", height: "auto" }}
-                          onError={(e) => (e.currentTarget.src = "/logos/_default.png")}
+                          /* AUMENTO de tamaño: antes clamp(36px, 7.5vw, 64px) */
+                          style={{ width: "clamp(48px, 9vw, 88px)", height: "auto" }}
+                          onError={(e) => {
+                            const el = e.currentTarget;
+                            if (/\.webp(\?.*)?$/i.test(el.src)) {
+                              el.src = pngHome; // fallback a PNG
+                            } else {
+                              el.src = "/logos/_default.png"; // default si también falla
+                            }
+                          }}
                         />
                         <div
                           className="big-score"
@@ -189,16 +213,24 @@ export default function Programacion({ partidos, equipos }) {
                           {haveScore ? `${p.home_score} - ${p.away_score}` : "VS"}
                         </div>
                         <img
-				loading="lazy" decoding="async" fetchpriority="low"
-                          src={logoFromTeamId(p.away_team)}
+                          loading="lazy" decoding="async" fetchpriority="low"
+                          src={webpAway}
                           alt={`Logo ${nombreEquipo(p.away_team)}`}
                           className="logo-img"
-                          style={{ width: "clamp(36px, 7.5vw, 64px)", height: "auto" }}
-                          onError={(e) => (e.currentTarget.src = "/logos/_default.png")}
+                          /* AUMENTO de tamaño: antes clamp(36px, 7.5vw, 64px) */
+                          style={{ width: "clamp(48px, 9vw, 88px)", height: "auto" }}
+                          onError={(e) => {
+                            const el = e.currentTarget;
+                            if (/\.webp(\?.*)?$/i.test(el.src)) {
+                              el.src = pngAway; // fallback a PNG
+                            } else {
+                              el.src = "/logos/_default.png";
+                            }
+                          }}
                         />
                       </div>
 
-                      {/* Nombres: MISMO TAMAÑO, hasta 2 líneas, centrados */}
+                      {/* Nombres */}
                       <div
                         className="names-row no-vs"
                         style={{
@@ -207,7 +239,8 @@ export default function Programacion({ partidos, equipos }) {
                           gap: 6,
                           alignItems: "center",
                           textAlign: "center",
-                          fontSize: "clamp(12px, 2.2vw, 16px)", // mismo para todos
+                          /* REDUCCIÓN sutil del tamaño de fuente (antes clamp(12px, 2.2vw, 16px)) */
+                          fontSize: "clamp(11px, 1.9vw, 14px)",
                           lineHeight: 1.1,
                         }}
                       >
@@ -215,11 +248,11 @@ export default function Programacion({ partidos, equipos }) {
                           className="team-name"
                           style={{
                             display: "-webkit-box",
-                            WebkitLineClamp: 2,              // máx. 2 líneas
+                            WebkitLineClamp: 2,
                             WebkitBoxOrient: "vertical",
                             overflow: "hidden",
                             textOverflow: "ellipsis",
-                            wordBreak: "break-word",          // rompe si hay palabras larguísimas
+                            wordBreak: "break-word",
                             whiteSpace: "normal",
                             minWidth: 0,
                             padding: "0 2px",
@@ -229,10 +262,7 @@ export default function Programacion({ partidos, equipos }) {
                           {nombreEquipo(p.home_team)}
                         </span>
 
-                        <span
-                          className="vs"
-                          style={{ fontSize: "clamp(10px, 2vw, 14px)", opacity: 0.8 }}
-                        >
+                        <span className="vs" style={{ fontSize: "clamp(10px, 2vw, 14px)", opacity: 0.8 }}>
                           vs
                         </span>
 
@@ -270,4 +300,3 @@ Programacion.propTypes = {
   partidos: PropTypes.array.isRequired,
   equipos: PropTypes.array.isRequired,
 };
-

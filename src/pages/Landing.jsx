@@ -8,12 +8,15 @@ export default function Landing({ onEnter, session, onLogout }) {
       <header className="app-header">
         <div />
         <div className="brand-line">
-          <img
-            src="/logo.png"
-            alt="Logo FUVEV"
-            className="brand-logo"
-            onError={(e) => (e.currentTarget.style.display = "none")}
-          />
+          <picture>
+            <source srcSet="/logo.webp" type="image/webp" />
+            <img
+              src="/logo.png"
+              alt="Logo FUVEV"
+              className="brand-logo"
+              onError={(e) => (e.currentTarget.style.display = "none")}
+            />
+          </picture>
           <h1 className="brand-title">FUVEV</h1>
         </div>
         <div style={{ justifySelf: "end", display: "flex", gap: 8 }}>

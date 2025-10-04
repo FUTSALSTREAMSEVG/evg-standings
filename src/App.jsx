@@ -133,12 +133,24 @@ function App() {
     setPartidos(matches || []);
   };
 
-  // Helpers públicos usados fuera de Programación
+  // Helpers públicos fuera de Programación
   const slugify = (s) => (s || "").toString().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .toLowerCase().replace(/[^a-z0-9\s-]/g, "").trim().replace(/\s+/g, "-");
-  const logoFromName = (name) => `/logos/${slugify(name)}.png`;
+  const logoFromName = (name) => `/logos/${slugify(name)}.png`; // se mantiene
   const nombreEquipo = (id) => equiposTodos.find((t) => t.id === id)?.name || "??";
   const logoFromTeamId = (id) => logoFromName(nombreEquipo(id));
+
+  // ==== Helpers WebP-first (sin romper API existente) ====
+  const toWebpFirst = (maybePng) =>
+    maybePng ? maybePng.replace(/\.png(\?.*)?$/i, ".webp$1") : maybePng;
+  const onLogoError = (e, pngFallback, defaultIfPngFails = "/logos/_default.png") => {
+    const el = e.currentTarget;
+    if (/\.webp(\?.*)?$/i.test(el.src)) {
+      el.src = pngFallback; // cae a PNG
+    } else {
+      el.src = defaultIfPngFails; // default si también falla PNG
+    }
+  };
 
   // Header público solo cuando NO es landing ni /admin
   const showPublicHeader = !showLanding && path !== "/admin";
@@ -149,13 +161,16 @@ function App() {
         <header className="app-header">
           <div />
           <div className="brand-line">
-            {/* 👉 Logo del header público (distinto al del Landing) */}
-            <img
-              src="/logo-evg.png"   // <--- CAMBIA AQUÍ el nombre si tu archivo se llama distinto
-              alt="Logo Torneo EVG"
-              className="brand-logo"
-              onError={(e) => (e.currentTarget.style.display = "none")}
-            />
+            {/* Logo del header público, WebP-first con fallback */}
+            <picture>
+              <source srcSet="/logo-evg.webp" type="image/webp" />
+              <img
+                src="/logo-evg.png"
+                alt="Logo Torneo EVG"
+                className="brand-logo"
+                onError={(e) => (e.currentTarget.style.display = "none")}
+              />
+            </picture>
             <h1 className="brand-title">TORNEO EVG</h1>
           </div>
           <div style={{ justifySelf: "end", display: "flex", gap: 8 }}>
@@ -240,6 +255,11 @@ function App() {
                 .map((p) => {
                   const haveScore = p.home_score != null && p.away_score != null;
                   const nombre = (id) => nombreEquipo(id);
+                  const pngHome = logoFromName(nombre(p.home_team));
+                  const pngAway = logoFromName(nombre(p.away_team));
+                  const webpHome = toWebpFirst(pngHome);
+                  const webpAway = toWebpFirst(pngAway);
+
                   return (
                     <li key={p.id} className="match-card">
                       <div className="match-badges">
@@ -259,19 +279,19 @@ function App() {
                       </div>
                       <div className="logos-row">
                         <img
-                          src={logoFromTeamId(p.home_team)}
+                          src={webpHome}
                           alt={`Logo ${nombre(p.home_team)}`}
                           className="logo-img"
-                          onError={(e) => (e.currentTarget.src = "/logos/_default.png")}
+                          onError={(e) => onLogoError(e, pngHome)}
                         />
                         <div className="big-score">
                           {haveScore ? `${p.home_score} - ${p.away_score}` : "VS"}
                         </div>
                         <img
-                          src={logoFromTeamId(p.away_team)}
+                          src={webpAway}
                           alt={`Logo ${nombre(p.away_team)}`}
                           className="logo-img"
-                          onError={(e) => (e.currentTarget.src = "/logos/_default.png")}
+                          onError={(e) => onLogoError(e, pngAway)}
                         />
                       </div>
                       <div className="names-row">

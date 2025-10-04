@@ -37,6 +37,23 @@ export default function Estadisticas({
   const lastColLabel = statsView === "goles" ? "GF" : "GC";
   const lastColColor = statsView === "goles" ? "#ffd7b5" : "#dfeaff";
 
+  // Helpers para WebP-first
+  const toWebpFirst = (url) =>
+    url ? url.replace(/\.png(\?.*)?$/i, ".webp$1") : url;
+
+  const onShieldError = (e, pngUrl) => {
+    const el = e.currentTarget;
+    const isWebp = /\.webp(\?.*)?$/i.test(el.src);
+    if (isWebp) {
+      el.src = pngUrl;           // fallback a PNG
+    } else {
+      // si tampoco hay PNG, ocúltalo (como antes)
+      el.style.visibility = "hidden";
+      el.style.width = "0px";
+      el.style.height = "0px";
+    }
+  };
+
   return (
     <section style={{ padding: "12px 8px" }}>
       <div style={{ display: "flex", gap: 10, justifyContent: "center", alignItems: "center", marginBottom: 12 }}>
@@ -65,23 +82,27 @@ export default function Estadisticas({
             </tr>
           </thead>
           <tbody>
-            {rows.map((t, idx) => (
-              <tr key={t.team_id}>
-                <td>{idx + 1}</td>
-                <td>
-                  <img
-                    src={logoFromName(t.equipo)}
-                    alt={`Escudo ${t.equipo}`}
-                    className="escudo"
-                    onError={(e) => { e.currentTarget.style.visibility = "hidden"; e.currentTarget.style.width = "0px"; e.currentTarget.style.height = "0px"; }}
-                  />
-                </td>
-                <td className="td-equipo">{t.equipo}</td>
-                <td style={{ color: lastColColor }}>
-                  {statsView === "goles" ? t.gf : t.gc}
-                </td>
-              </tr>
-            ))}
+            {rows.map((t, idx) => {
+              const pngUrl = logoFromName(t.equipo);    // originalmente .png
+              const webpFirst = toWebpFirst(pngUrl);    // intenta .webp primero
+              return (
+                <tr key={t.team_id}>
+                  <td>{idx + 1}</td>
+                  <td>
+                    <img
+                      src={webpFirst}
+                      alt={`Escudo ${t.equipo}`}
+                      className="escudo"
+                      onError={(e) => onShieldError(e, pngUrl)}
+                    />
+                  </td>
+                  <td className="td-equipo">{t.equipo}</td>
+                  <td style={{ color: lastColColor }}>
+                    {statsView === "goles" ? t.gf : t.gc}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

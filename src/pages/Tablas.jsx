@@ -7,7 +7,7 @@ export default function Tablas({
   layout, leftWrapRef, rightWrapRef, commonHeight
 }) {
   // Ancho bajo el cual ocultamos la columna "Equipo"
-  // ⬇️ AUMENTADO para móviles
+  // (Más alto para móviles, compacta mejor)
   const HIDE_NAME_BREAKPOINT = 720;
 
   const getHidden = () =>
@@ -33,6 +33,15 @@ export default function Tablas({
       window.removeEventListener("resize", onChange);
     };
   }, []);
+
+  // Prefiere .webp y cae a .png si falla
+  const toWebpFirst = (pngLikeUrl) => {
+    if (!pngLikeUrl) return pngLikeUrl;
+    // si ya viene .webp, lo dejamos
+    if (/\.webp(\?.*)?$/i.test(pngLikeUrl)) return pngLikeUrl;
+    // si termina en .png -> cámbialo a .webp
+    return pngLikeUrl.replace(/\.png(\?.*)?$/i, ".webp$1");
+  };
 
   const tableFont = {
     fontSize: "clamp(11px, 1.6vw, 14px)",
@@ -63,6 +72,21 @@ export default function Tablas({
     window.scrollTo({ top: 0, behavior: "auto" });
   };
 
+  // Imagen: intenta .webp → cae a .png → si falla, oculta
+  const onShieldError = (e, originalPngUrl) => {
+    const el = e.currentTarget;
+    const isWebp = /\.webp(\?.*)?$/i.test(el.src);
+    if (isWebp) {
+      // probar con .png (el original que nos pasó App/prop)
+      el.src = originalPngUrl;
+    } else {
+      // ocultar si también falló png
+      el.style.visibility = "hidden";
+      el.style.width = "0px";
+      el.style.height = "0px";
+    }
+  };
+
   const TablaGrupo = ({ titulo, data }) => (
     <div
       className="panel"
@@ -71,7 +95,7 @@ export default function Tablas({
       <h2 style={titleFont}>{titulo}</h2>
       <table className="compacta compacta--pos" style={tableFont}>
         <colgroup>
-          {/* ⬇️ ANCHOS MÁS ESTRECHOS */}
+          {/* columnas más estrechas para caber en móviles */}
           <col style={{ width: 40 }} />   {/* POS */}
           <col style={{ width: 36 }} />   {/* ESC */}
           {!hideNameCol && <col />}       {/* EQUIPO (solo si no se oculta) */}
@@ -102,46 +126,46 @@ export default function Tablas({
         </thead>
 
         <tbody>
-          {ordenarTabla(data).map((t, i) => (
-            <tr key={t.team_id}>
-              <td>{i + 1}</td>
-              <td
-                title={`Ver partidos jugados de ${t.equipo}`}
-                onClick={() => onOpenEquipo(t.team_id, t.equipo)}
-                style={{ cursor: "pointer" }}
-              >
-                <img
-                  src={logoFromName(t.equipo)}
-                  alt={`Escudo ${t.equipo}`}
-                  className="escudo"
-                  onError={(e) => {
-                    e.currentTarget.style.visibility = "hidden";
-                    e.currentTarget.style.width = "0px";
-                    e.currentTarget.style.height = "0px";
-                  }}
-                />
-              </td>
-
-              {!hideNameCol && (
+          {ordenarTabla(data).map((t, i) => {
+            const pngUrl = logoFromName(t.equipo);              // viene .png desde App.jsx
+            const webpFirst = toWebpFirst(pngUrl);              // probamos .webp primero
+            return (
+              <tr key={t.team_id}>
+                <td>{i + 1}</td>
                 <td
-                  className="td-equipo td-equipo-link"
-                  onClick={() => onOpenEquipo(t.team_id, t.equipo)}
                   title={`Ver partidos jugados de ${t.equipo}`}
+                  onClick={() => onOpenEquipo(t.team_id, t.equipo)}
+                  style={{ cursor: "pointer" }}
                 >
-                  <span style={teamNameStyle}>{t.equipo}</span>
+                  <img
+                    src={webpFirst}
+                    alt={`Escudo ${t.equipo}`}
+                    className="escudo"
+                    onError={(e) => onShieldError(e, pngUrl)}
+                  />
                 </td>
-              )}
 
-              <td>{t.pts}</td>
-              <td>{t.pj}</td>
-              <td>{t.pg}</td>
-              <td>{t.pe}</td>
-              <td>{t.pp}</td>
-              <td>{t.gf}</td>
-              <td>{t.gc}</td>
-              <td>{t.dg}</td>
-            </tr>
-          ))}
+                {!hideNameCol && (
+                  <td
+                    className="td-equipo td-equipo-link"
+                    onClick={() => onOpenEquipo(t.team_id, t.equipo)}
+                    title={`Ver partidos jugados de ${t.equipo}`}
+                  >
+                    <span style={teamNameStyle}>{t.equipo}</span>
+                  </td>
+                )}
+
+                <td>{t.pts}</td>
+                <td>{t.pj}</td>
+                <td>{t.pg}</td>
+                <td>{t.pe}</td>
+                <td>{t.pp}</td>
+                <td>{t.gf}</td>
+                <td>{t.gc}</td>
+                <td>{t.dg}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

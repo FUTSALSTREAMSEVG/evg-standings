@@ -13,8 +13,8 @@ export default function AdminPage({ onExit }) {
 
   // Crear partido
   const [grupo, setGrupo] = useState("A");
-  const [equipo1, setEquipo1] = useState("");
-  const [equipo2, setEquipo2] = useState("");
+  const [equipo1, setEquipo1] = useState(""); // nombre
+  const [equipo2, setEquipo2] = useState(""); // nombre
   const [fecha, setFecha] = useState("");
   const [hora, setHora] = useState("");
   const [semana, setSemana] = useState(1);
@@ -61,9 +61,14 @@ export default function AdminPage({ onExit }) {
 
   const recargar = async () => {
     const { data: teams } = await supabase.from("teams").select("id,name,group_label").order("name");
-    const { data: matches } = await supabase.from("matches").select("*").order("match_datetime", { ascending: true });
+    const { data: matches } = await supabase
+      .from("matches")
+      .select("*")
+      .order("match_datetime", { ascending: true });
+
     setEquipos(teams || []);
     setPartidos(matches || []);
+
     const weeks = Array.from(new Set((matches || []).map((m) => m.week_number).filter(Boolean))).sort((a,b)=>a-b);
     setSemanaAdminSeleccionada((prev) => (typeof prev === "number" ? prev : (weeks[weeks.length - 1] ?? null)));
   };
@@ -93,21 +98,8 @@ export default function AdminPage({ onExit }) {
     const om = String(abs % 60).padStart(2, "0");
     return `${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}T${String(hh).padStart(2,"0")}:${String(mm).padStart(2,"0")}:00${sign}${oh}:${om}`;
   };
-  const nombreEquipo = (id) => equipos.find((t) => t.id === id)?.name || "??";
-  const agruparPorDia = (arr) => {
-    const ymd = (dt) => {
-      const d = new Date(dt);
-      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-    };
-    const g = {};
-    (arr || []).forEach((m) => {
-      if (!m?.match_datetime) return;
-      const k = ymd(m.match_datetime);
-      g[k] = g[k] || [];
-      g[k].push(m);
-    });
-    return Object.entries(g).sort(([a],[b]) => a.localeCompare(b));
-  };
+  const nombreEquipoPorId = (id) => equipos.find((t) => t.id === id)?.name || "??";
+
   const formatearHora = (dt) => {
     if (!dt) return "";
     const f = new Date(dt);
@@ -124,6 +116,50 @@ export default function AdminPage({ onExit }) {
     const meses = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
     return `${dias[f.getDay()]} ${f.getDate()} de ${meses[f.getMonth()]}`;
   };
+  const agruparPorDia = (arr) => {
+    const ymd = (dt) => {
+      const d = new Date(dt);
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+    };
+    const g = {};
+    (arr || []).forEach((m) => {
+      if (!m?.match_datetime) return;
+      const k = ymd(m.match_datetime);
+      g[k] = g[k] || [];
+      g[k].push(m);
+    });
+    return Object.entries(g).sort(([a],[b]) => a.localeCompare(b));
+  };
+
+  // ========= LÓGICA: rivales del mismo grupo que NO han jugado con Equipo1 =========
+  const equiposDelGrupo = useMemo(
+    () => equipos.filter((t) => t.group_label === grupo),
+    [equipos, grupo]
+  );
+  const idEquipo1 = useMemo(() => equiposDelGrupo.find((t) => t.name === equipo1)?.id ?? null, [equiposDelGrupo, equipo1]);
+
+  // "Ya jugó" significa que hay algún partido con ambos equipos y ESCORES no nulos.
+  const yaJugaron = (idA, idB) => {
+    if (!idA || !idB) return false;
+    return (partidos || []).some((m) =>
+      m && m.home_team && m.away_team &&
+      ((m.home_team === idA && m.away_team === idB) || (m.home_team === idB && m.away_team === idA)) &&
+      m.home_score != null && m.away_score != null
+    );
+  };
+
+  const rivalesDisponibles = useMemo(() => {
+    // Si aún no eliges Equipo1, muestra todos los del grupo excepto "Equipo 1" (cuando exista)
+    if (!idEquipo1) {
+      return equiposDelGrupo
+        .filter((t) => t.name !== equipo1)
+        .map((t) => t.name);
+    }
+    // Con Equipo1 seleccionado: filtra rivales que NO hayan jugado todavía
+    return equiposDelGrupo
+      .filter((r) => r.id !== idEquipo1 && !yaJugaron(idEquipo1, r.id))
+      .map((r) => r.name);
+  }, [equiposDelGrupo, idEquipo1, equipo1, partidos]);
 
   // ====== Crear partido ======
   const guardarPartido = async () => {
@@ -132,6 +168,12 @@ export default function AdminPage({ onExit }) {
     const t1 = grupoTeams.find((t) => t.name === equipo1);
     const t2 = grupoTeams.find((t) => t.name === equipo2);
     if (!t1 || !t2) return;
+
+    // Evitar duplicar (por si cambió algo entre renders): si ya jugaron, no crear
+    if (yaJugaron(t1.id, t2.id)) {
+      alert("Estos equipos ya jugaron entre sí. Elige otro rival.");
+      return;
+    }
 
     const localCombined = `${fecha}T${hora}`;
     const iso = localToISOWithOffset(localCombined);
@@ -210,7 +252,6 @@ export default function AdminPage({ onExit }) {
     }
     return base;
   }, [partidos, semanaAdminSeleccionada]);
-
   // ====== UI ======
   return (
     <div>
@@ -218,12 +259,15 @@ export default function AdminPage({ onExit }) {
       <header className="app-header">
         <div />
         <div className="brand-line">
-          <img
-            src="/logo-evg.png"
-            alt="Logo Torneo EVG"
-            className="brand-logo"
-            onError={(e) => (e.currentTarget.style.display = "none")}
-          />
+          <picture>
+            <source srcSet="/logo-evg.webp" type="image/webp" />
+            <img
+              src="/logo-evg.png"
+              alt="Logo Torneo EVG"
+              className="brand-logo"
+              onError={(e) => (e.currentTarget.style.display = "none")}
+            />
+          </picture>
           <h1 className="brand-title">PANEL ADMIN</h1>
         </div>
         <div style={{ justifySelf: "end", display: "flex", gap: 8 }}>
@@ -251,37 +295,49 @@ export default function AdminPage({ onExit }) {
           </div>
         ) : (
           <>
-            {/* CREAR PARTIDO */}
+            {/* === CREAR PARTIDO === */}
             <div className="panel center-max-900" style={{ textAlign: "center" }}>
               <h3>CREAR PARTIDO</h3>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", justifyContent: "center" }}>
-                <select value={grupo} onChange={(e) => setGrupo(e.target.value)}>
+                <select value={grupo} onChange={(e) => { setGrupo(e.target.value); setEquipo1(""); setEquipo2(""); }}>
                   <option value="A">Grupo A</option>
                   <option value="B">Grupo B</option>
                 </select>
 
-                <select value={equipo1} onChange={(e) => setEquipo1(e.target.value)}>
+                {/* Equipo 1: del grupo */}
+                <select
+                  value={equipo1}
+                  onChange={(e) => { setEquipo1(e.target.value); setEquipo2(""); }}
+                >
                   <option value="">Equipo 1</option>
-                  {equipos.filter((t) => t.group_label === grupo).map((t) => (
+                  {equiposDelGrupo.map((t) => (
                     <option key={t.id} value={t.name}>{t.name}</option>
                   ))}
                 </select>
 
-                <select value={equipo2} onChange={(e) => setEquipo2(e.target.value)}>
-                  <option value="">Equipo 2</option>
-                  {equipos.filter((t) => t.group_label === grupo).map((t) => (
-                    <option key={t.id} value={t.name}>{t.name}</option>
+                {/* Equipo 2: rivales del grupo que NO han jugado con Equipo 1 */}
+                <select
+                  value={equipo2}
+                  onChange={(e) => setEquipo2(e.target.value)}
+                  disabled={!equipo1}
+                  title={!equipo1 ? "Selecciona primero Equipo 1" : undefined}
+                >
+                  <option value="">{equipo1 ? "Rival disponible" : "Elige Equipo 1 primero"}</option>
+                  {rivalesDisponibles.map((name) => (
+                    <option key={name} value={name}>{name}</option>
                   ))}
                 </select>
 
                 <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
                 <input type="time" value={hora} onChange={(e) => setHora(e.target.value)} />
                 <input type="number" value={semana} onChange={(e) => setSemana(Number(e.target.value))} style={{ width: 90 }} placeholder="Semana" />
-                <button onClick={guardarPartido}>Crear Partido</button>
+                <button onClick={guardarPartido} disabled={!equipo1 || !equipo2 || !fecha || !hora}>
+                  Crear Partido
+                </button>
               </div>
             </div>
 
-            {/* FILTRO SEMANA */}
+            {/* === FILTRO SEMANA (ADMIN) === */}
             <div style={{ marginTop: 12, textAlign: "center" }}>
               <label style={{ marginRight: 8 }}>Ver (Admin):</label>
               <select
@@ -295,7 +351,7 @@ export default function AdminPage({ onExit }) {
               </select>
             </div>
 
-            {/* LISTA / EDICIÓN */}
+            {/* === LISTA / EDICIÓN === */}
             <div className="center-max-900" style={{ marginTop: 10 }}>
               {(() => {
                 const grupos = agruparPorDia(partidosFiltrados);
@@ -309,69 +365,44 @@ export default function AdminPage({ onExit }) {
                         const haveScore = p.home_score != null && p.away_score != null;
 
                         return (
-                          <li key={p.id} className={`admin-card ${!editing ? "hoverable" : ""}`} style={{ textAlign: "center" }}>
-                            {!editing ? (
+                          <li key={p.id} className={`admin-card ${!editing ? "hoverable" : ""}`} style={{ textAlign: "center", display: "flex", flexDirection: "column", gap: 10 }}>
+                            {/* ===== FILA SUPERIOR: badges + info básica ===== */}
+                            <div className="admin-toprow" style={{ display: "grid", gridTemplateColumns: "1fr", alignItems: "center" }}>
+                              <div className="admin-badges" style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center", flexWrap: "wrap" }}>
+                                <span className="admin-badge admin-badge-group">GRUPO {p.group_label}</span>
+                                <span className="admin-badge admin-badge-time">{formatearHora(p.match_datetime)}</span>
+                                {!editing && (
+                                  <span className="admin-badge admin-badge-match"
+                                        style={{ display: "inline-flex", alignItems: "center", gap: 8, whiteSpace: "nowrap" }}>
+                                    <span>{nombreEquipoPorId(p.home_team)}</span>
+                                    {haveScore ? (
+                                      <span
+                                        style={{
+                                          display: "inline-block",
+                                          padding: "2px 8px",
+                                          border: "1px solid #444",
+                                          borderRadius: 6,
+                                          background: "#1a1a1a",
+                                          fontWeight: 700,
+                                          letterSpacing: "0.3px",
+                                        }}
+                                      >
+                                        {p.home_score} vs {p.away_score}
+                                      </span>
+                                    ) : (
+                                      <b>vs</b>
+                                    )}
+                                    <span>{nombreEquipoPorId(p.away_team)}</span>
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* ===== CUERPO: inputs de edición cuando aplica ===== */}
+                            {editing && (
                               <>
-                                {/* fila superior: info centrada + acciones a la derecha */}
-                                <div className="admin-toprow" style={{ display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center" }}>
-                                  {/* INFO CENTRADA */}
-                                  <div className="admin-badges"
-                                       style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", justifyContent: "center" }}>
-                                    <span className="admin-badge admin-badge-group">GRUPO {p.group_label}</span>
-                                    <span className="admin-badge admin-badge-time">{formatearHora(p.match_datetime)}</span>
-
-                                    {/* Línea de partido centrada: Equipo1 [score-box o 'vs'] Equipo2 */}
-                                    <span className="admin-badge admin-badge-match"
-                                          style={{ display: "inline-flex", alignItems: "center", gap: 8, whiteSpace: "nowrap" }}>
-                                      <span>{nombreEquipo(p.home_team)}</span>
-
-                                      {haveScore ? (
-                                        <span
-                                          style={{
-                                            display: "inline-block",
-                                            padding: "2px 8px",
-                                            border: "1px solid #444",
-                                            borderRadius: 6,
-                                            background: "#1a1a1a",
-                                            fontWeight: 700,
-                                            letterSpacing: "0.3px",
-                                          }}
-                                        >
-                                          {p.home_score} vs {p.away_score}
-                                        </span>
-                                      ) : (
-                                        <b>vs</b>
-                                      )}
-
-                                      <span>{nombreEquipo(p.away_team)}</span>
-                                    </span>
-                                  </div>
-
-                                  {/* ACCIONES */}
-                                  <div style={{ display: "flex", gap: 8, justifySelf: "end" }}>
-                                    <button onClick={() => empezarEdicion(p)}>Editar</button>
-                                    <button onClick={() => eliminarPartido(p.id)}>Eliminar</button>
-                                  </div>
-                                </div>
-
-                                {/* ⛔️ Ya no mostramos marcador abajo: se integró en la línea */}
-                              </>
-                            ) : (
-                              <>
-                                {/* EDICIÓN: también centrado */}
-                                <div className="admin-toprow" style={{ display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center" }}>
-                                  <div className="admin-badges" style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center", flexWrap: "wrap" }}>
-                                    <span className="admin-badge admin-badge-group">GRUPO {p.group_label}</span>
-                                    <span className="admin-badge admin-badge-time">{formatearHora(p.match_datetime)}</span>
-                                  </div>
-                                  <div style={{ display: "flex", gap: 8, justifySelf: "end" }}>
-                                    <button onClick={actualizarEdicion}>Guardar</button>
-                                    <button onClick={cancelarEdicion}>Cancelar</button>
-                                  </div>
-                                </div>
-
                                 <div className="admin-bottomrow" style={{ gap: 6, justifyContent: "center", display: "flex", flexWrap: "wrap" }}>
-                                  <span>{nombreEquipo(p.home_team)}</span>
+                                  <span>{nombreEquipoPorId(p.home_team)}</span>
                                   <input
                                     type="number" placeholder="Home" style={{ width: 70 }}
                                     value={editDraft?.home_score ?? ""}
@@ -383,7 +414,7 @@ export default function AdminPage({ onExit }) {
                                     value={editDraft?.away_score ?? ""}
                                     onChange={(e) => setEditDraft((d) => ({ ...d, away_score: e.target.value === "" ? "" : Number(e.target.value) }))}
                                   />
-                                  <span>{nombreEquipo(p.away_team)}</span>
+                                  <span>{nombreEquipoPorId(p.away_team)}</span>
                                 </div>
 
                                 <div className="admin-bottomrow" style={{ gap: 8, justifyContent: "center", display: "flex", flexWrap: "wrap" }}>
@@ -406,6 +437,32 @@ export default function AdminPage({ onExit }) {
                                 </div>
                               </>
                             )}
+
+                            {/* ===== BARRA INFERIOR: botones SIEMPRE ABAJO ===== */}
+                            <div
+                              className="admin-actions"
+                              style={{
+                                display: "flex",
+                                justifyContent: "center",
+                                gap: 8,
+                                flexWrap: "wrap",
+                                marginTop: 6,
+                                paddingTop: 6,
+                                borderTop: "1px solid rgba(255,255,255,0.08)",
+                              }}
+                            >
+                              {!editing ? (
+                                <>
+                                  <button onClick={() => empezarEdicion(p)}>Editar</button>
+                                  <button onClick={() => eliminarPartido(p.id)}>Eliminar</button>
+                                </>
+                              ) : (
+                                <>
+                                  <button onClick={actualizarEdicion}>Guardar</button>
+                                  <button onClick={cancelarEdicion}>Cancelar</button>
+                                </>
+                              )}
+                            </div>
                           </li>
                         );
                       })}
