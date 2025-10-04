@@ -554,3 +554,21 @@ table.compacta.compacta--pos tbody td:nth-child(11){
   transform: translateY(0);
   filter: brightness(0.98);
 }
+/* ===== Mobile compact tweaks (solo para pantallas pequeñas) ===== */
+@media (max-width: 480px){
+  table.compacta thead th{
+    padding: 6px 4px;
+    font-size: 11px;
+  }
+  table.compacta tbody td{
+    padding: 4px 4px;
+    font-size: 12px;
+  }
+  .panel{ padding: 6px; }
+}
+
+/* Aún más compacto en teléfonos muy estrechos */
+@media (max-width: 380px){
+  table.compacta thead th{ font-size: 10px; }
+  table.compacta tbody td{ font-size: 11px; }
+}

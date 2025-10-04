@@ -7,9 +7,9 @@ export default function Tablas({
   layout, leftWrapRef, rightWrapRef, commonHeight
 }) {
   // Ancho bajo el cual ocultamos la columna "Equipo"
-  const HIDE_NAME_BREAKPOINT = 560; // ajusta a 430/480/600 si prefieres
+  // ⬇️ AUMENTADO para móviles
+  const HIDE_NAME_BREAKPOINT = 720;
 
-  // Estado: true si debemos ocultar la col. "Equipo"
   const getHidden = () =>
     typeof window !== "undefined"
       ? window.matchMedia(`(max-width:${HIDE_NAME_BREAKPOINT}px)`).matches
@@ -17,7 +17,6 @@ export default function Tablas({
 
   const [hideNameCol, setHideNameCol] = useState(false);
 
-  // Evitar parpadeo en el primer pintado
   useLayoutEffect(() => setHideNameCol(getHidden()), []);
 
   useEffect(() => {
@@ -35,7 +34,6 @@ export default function Tablas({
     };
   }, []);
 
-  // Tipografías responsivas y consistentes
   const tableFont = {
     fontSize: "clamp(11px, 1.6vw, 14px)",
     tableLayout: "fixed",
@@ -45,7 +43,6 @@ export default function Tablas({
   const headFont  = { fontSize: "clamp(10px, 1.4vw, 13px)", whiteSpace: "nowrap" };
   const titleFont = { fontSize: "clamp(16px, 2.2vw, 20px)", margin: "0 0 8px 0" };
 
-  // Nombres: máx. 2 líneas, centrados, sin cortes raros
   const teamNameStyle = {
     display: "-webkit-box",
     WebkitLineClamp: 2,
@@ -66,7 +63,6 @@ export default function Tablas({
     window.scrollTo({ top: 0, behavior: "auto" });
   };
 
-  // === Tabla reusada (para Grupo A y B) ===
   const TablaGrupo = ({ titulo, data }) => (
     <div
       className="panel"
@@ -75,17 +71,18 @@ export default function Tablas({
       <h2 style={titleFont}>{titulo}</h2>
       <table className="compacta compacta--pos" style={tableFont}>
         <colgroup>
-          <col style={{ width: 48 }} />   {/* POS */}
-          <col style={{ width: 40 }} />   {/* ESC */}
+          {/* ⬇️ ANCHOS MÁS ESTRECHOS */}
+          <col style={{ width: 40 }} />   {/* POS */}
+          <col style={{ width: 36 }} />   {/* ESC */}
           {!hideNameCol && <col />}       {/* EQUIPO (solo si no se oculta) */}
-          <col style={{ width: 44 }} />   {/* PTS */}
-          <col style={{ width: 44 }} />   {/* PJ */}
-          <col style={{ width: 44 }} />   {/* PG */}
-          <col style={{ width: 44 }} />   {/* PE */}
-          <col style={{ width: 44 }} />   {/* PP */}
-          <col style={{ width: 44 }} />   {/* GF */}
-          <col style={{ width: 44 }} />   {/* GC */}
-          <col style={{ width: 44 }} />   {/* DG */}
+          <col style={{ width: 36 }} />   {/* PTS */}
+          <col style={{ width: 36 }} />   {/* PJ */}
+          <col style={{ width: 36 }} />   {/* PG */}
+          <col style={{ width: 36 }} />   {/* PE */}
+          <col style={{ width: 36 }} />   {/* PP */}
+          <col style={{ width: 36 }} />   {/* GF */}
+          <col style={{ width: 36 }} />   {/* GC */}
+          <col style={{ width: 36 }} />   {/* DG */}
         </colgroup>
 
         <thead style={headFont}>
@@ -108,8 +105,6 @@ export default function Tablas({
           {ordenarTabla(data).map((t, i) => (
             <tr key={t.team_id}>
               <td>{i + 1}</td>
-
-              {/* Escudo: si no hay col "Equipo", queda como botón para abrir detalle */}
               <td
                 title={`Ver partidos jugados de ${t.equipo}`}
                 onClick={() => onOpenEquipo(t.team_id, t.equipo)}
@@ -176,4 +171,3 @@ Tablas.propTypes = {
   rightWrapRef: PropTypes.object.isRequired,
   commonHeight: PropTypes.oneOfType([PropTypes.number, PropTypes.oneOf([null])]),
 };
-
