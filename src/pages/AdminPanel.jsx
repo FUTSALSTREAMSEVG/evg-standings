@@ -13,8 +13,8 @@ export default function AdminPage({ onExit }) {
 
   // Crear partido
   const [grupo, setGrupo] = useState("A");
-  const [equipo1, setEquipo1] = useState(""); // nombre
-  const [equipo2, setEquipo2] = useState(""); // nombre
+  const [equipo1, setEquipo1] = useState(""); // nombre (no id)
+  const [equipo2, setEquipo2] = useState(""); // nombre (no id)
   const [fecha, setFecha] = useState("");
   const [hora, setHora] = useState("");
   const [semana, setSemana] = useState(1);
@@ -98,6 +98,7 @@ export default function AdminPage({ onExit }) {
     const om = String(abs % 60).padStart(2, "0");
     return `${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}T${String(hh).padStart(2,"0")}:${String(mm).padStart(2,"0")}:00${sign}${oh}:${om}`;
   };
+
   const nombreEquipoPorId = (id) => equipos.find((t) => t.id === id)?.name || "??";
 
   const formatearHora = (dt) => {
@@ -138,7 +139,7 @@ export default function AdminPage({ onExit }) {
   );
   const idEquipo1 = useMemo(() => equiposDelGrupo.find((t) => t.name === equipo1)?.id ?? null, [equiposDelGrupo, equipo1]);
 
-  // "Ya jugó" significa que hay algún partido con ambos equipos y ESCORES no nulos.
+  // "Ya jugó" = existe un partido con ambos equipos y escores no nulos.
   const yaJugaron = (idA, idB) => {
     if (!idA || !idB) return false;
     return (partidos || []).some((m) =>
@@ -149,13 +150,11 @@ export default function AdminPage({ onExit }) {
   };
 
   const rivalesDisponibles = useMemo(() => {
-    // Si aún no eliges Equipo1, muestra todos los del grupo excepto "Equipo 1" (cuando exista)
     if (!idEquipo1) {
       return equiposDelGrupo
         .filter((t) => t.name !== equipo1)
         .map((t) => t.name);
     }
-    // Con Equipo1 seleccionado: filtra rivales que NO hayan jugado todavía
     return equiposDelGrupo
       .filter((r) => r.id !== idEquipo1 && !yaJugaron(idEquipo1, r.id))
       .map((r) => r.name);
@@ -169,7 +168,6 @@ export default function AdminPage({ onExit }) {
     const t2 = grupoTeams.find((t) => t.name === equipo2);
     if (!t1 || !t2) return;
 
-    // Evitar duplicar (por si cambió algo entre renders): si ya jugaron, no crear
     if (yaJugaron(t1.id, t2.id)) {
       alert("Estos equipos ya jugaron entre sí. Elige otro rival.");
       return;
@@ -364,45 +362,124 @@ export default function AdminPage({ onExit }) {
                         const editing = editando === p.id;
                         const haveScore = p.home_score != null && p.away_score != null;
 
+                        const nameHome = nombreEquipoPorId(p.home_team);
+                        const nameAway = nombreEquipoPorId(p.away_team);
+
                         return (
-                          <li key={p.id} className={`admin-card ${!editing ? "hoverable" : ""}`} style={{ textAlign: "center", display: "flex", flexDirection: "column", gap: 10 }}>
-                            {/* ===== FILA SUPERIOR: badges + info básica ===== */}
+                          <li
+                            key={p.id}
+                            className={`admin-card ${!editing ? "hoverable" : ""}`}
+                            style={{
+                              textAlign: "center",
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: 10,
+                              position: "relative",
+                              overflow: "hidden",
+                              // ⬇️ Fondo SIEMPRE visible en la tarjeta (sin overlay ni hover)
+                              background: "linear-gradient(rgba(0,0,0,0.70), rgba(0,0,0,0.7)), url('/decor/field-grid.svg') center/120% no-repeat",
+
+                            }}
+                          >
+                            {/* ===== FILA SUPERIOR: badges + hora ===== */}
                             <div className="admin-toprow" style={{ display: "grid", gridTemplateColumns: "1fr", alignItems: "center" }}>
                               <div className="admin-badges" style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center", flexWrap: "wrap" }}>
                                 <span className="admin-badge admin-badge-group">GRUPO {p.group_label}</span>
                                 <span className="admin-badge admin-badge-time">{formatearHora(p.match_datetime)}</span>
-                                {!editing && (
-                                  <span className="admin-badge admin-badge-match"
-                                        style={{ display: "inline-flex", alignItems: "center", gap: 8, whiteSpace: "nowrap" }}>
-                                    <span>{nombreEquipoPorId(p.home_team)}</span>
-                                    {haveScore ? (
-                                      <span
-                                        style={{
-                                          display: "inline-block",
-                                          padding: "2px 8px",
-                                          border: "1px solid #444",
-                                          borderRadius: 6,
-                                          background: "#1a1a1a",
-                                          fontWeight: 700,
-                                          letterSpacing: "0.3px",
-                                        }}
-                                      >
-                                        {p.home_score} vs {p.away_score}
-                                      </span>
-                                    ) : (
-                                      <b>vs</b>
-                                    )}
-                                    <span>{nombreEquipoPorId(p.away_team)}</span>
-                                  </span>
-                                )}
                               </div>
                             </div>
 
-                            {/* ===== CUERPO: inputs de edición cuando aplica ===== */}
+                            {/* ===== SOLO NOMBRES + MARCADOR (SIN LOGOS) ===== */}
+                            <div
+                              className="names-row"
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: "minmax(0,1fr) auto minmax(0,1fr)",
+                                gap: 10,
+                                alignItems: "center",
+                                textAlign: "center",
+                                fontSize: "clamp(20px, 1.9vw, 14px)",
+                                lineHeight: 1.1,
+                              }}
+                            >
+                              <span
+                                className="team-name"
+                                title={nameHome}
+                                style={{
+                                  display: "-webkit-box",
+                                  WebkitLineClamp: 2,
+                                  WebkitBoxOrient: "vertical",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  wordBreak: "break-word",
+                                  whiteSpace: "normal",
+                                  minWidth: 0,
+                                  padding: "0 2px",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {nameHome}
+                              </span>
+
+                              <div
+                                className="big-score"
+                                style={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  whiteSpace: "nowrap",
+                                  lineHeight: 1,
+                                  fontSize: "clamp(18px, 5.5vw, 26px)",
+                                  minWidth: 56,
+                                  padding: "6px 12px",
+                                  borderRadius: 10,
+                                  background: "rgba(241,127,38,0.22)",
+                                  border: "1px solid rgba(241,127,38,0.65)",
+                                  color: "#ffd7b5",
+                                  fontWeight: 900,
+                                  letterSpacing: "1px",
+                                }}
+                              >
+                                {haveScore ? `${p.home_score} - ${p.away_score}` : "VS"}
+                              </div>
+
+                              <span
+                                className="team-name"
+                                title={nameAway}
+                                style={{
+                                  display: "-webkit-box",
+                                  WebkitLineClamp: 2,
+                                  WebkitBoxOrient: "vertical",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  wordBreak: "break-word",
+                                  whiteSpace: "normal",
+                                  minWidth: 0,
+                                  padding: "0 2px",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {nameAway}
+                              </span>
+                            </div>
+
+                            {/* ===== CUERPO (solo en edición): inputs ===== */}
                             {editing && (
                               <>
                                 <div className="admin-bottomrow" style={{ gap: 6, justifyContent: "center", display: "flex", flexWrap: "wrap" }}>
-                                  <span>{nombreEquipoPorId(p.home_team)}</span>
+                                  <span
+                                    title={nameHome}
+                                    style={{
+                                      display: "-webkit-box",
+                                      WebkitLineClamp: 1,
+                                      WebkitBoxOrient: "vertical",
+                                      overflow: "hidden",
+                                      textOverflow: "ellipsis",
+                                      maxWidth: 180,
+                                    }}
+                                  >
+                                    {nameHome}
+                                  </span>
                                   <input
                                     type="number" placeholder="Home" style={{ width: 70 }}
                                     value={editDraft?.home_score ?? ""}
@@ -414,7 +491,19 @@ export default function AdminPage({ onExit }) {
                                     value={editDraft?.away_score ?? ""}
                                     onChange={(e) => setEditDraft((d) => ({ ...d, away_score: e.target.value === "" ? "" : Number(e.target.value) }))}
                                   />
-                                  <span>{nombreEquipoPorId(p.away_team)}</span>
+                                  <span
+                                    title={nameAway}
+                                    style={{
+                                      display: "-webkit-box",
+                                      WebkitLineClamp: 1,
+                                      WebkitBoxOrient: "vertical",
+                                      overflow: "hidden",
+                                      textOverflow: "ellipsis",
+                                      maxWidth: 180,
+                                    }}
+                                  >
+                                    {nameAway}
+                                  </span>
                                 </div>
 
                                 <div className="admin-bottomrow" style={{ gap: 8, justifyContent: "center", display: "flex", flexWrap: "wrap" }}>
