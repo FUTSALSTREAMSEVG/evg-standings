@@ -4,12 +4,14 @@ import PropTypes from "prop-types";
 export default function Estadisticas({
   grupoA, grupoB, statsView, setStatsView, logoFromName
 }) {
+  // Unifica equipos de A y B (por team_id)
   const all = useMemo(() => {
     const map = new Map();
     [...grupoA, ...grupoB].forEach((t) => map.set(t.team_id, { ...t }));
     return Array.from(map.values());
   }, [grupoA, grupoB]);
 
+  // Top 5 según la vista
   let rows = [];
   if (statsView === "valla") {
     rows = [...all].sort((a, b) => {
@@ -26,6 +28,7 @@ export default function Estadisticas({
       return a.gc - b.gc;
     }).slice(0, 5);
   } else {
+    // "mas_goleados"
     rows = [...all].sort((a, b) => {
       if (b.gc !== a.gc) return b.gc - a.gc;
       if (b.pts !== a.pts) return b.pts - a.pts;
@@ -37,7 +40,7 @@ export default function Estadisticas({
   const lastColLabel = statsView === "goles" ? "GF" : "GC";
   const lastColColor = statsView === "goles" ? "#ffd7b5" : "#dfeaff";
 
-  // WebP-first SOLO locales
+  // WebP-first SOLO para rutas locales (si es URL absoluta no se toca)
   const toWebpFirst = (url) =>
     url && url.startsWith("/") ? url.replace(/\.png(\?.*)?$/i, ".webp$1") : url;
 
@@ -46,8 +49,10 @@ export default function Estadisticas({
     const isLocal = el.src.startsWith(window.location.origin) || el.src.startsWith("/");
     const isWebp = /\.webp(\?.*)?$/i.test(el.src);
     if (isLocal && isWebp) {
-      el.src = pngUrl;           // fallback a PNG local
+      // Fallback a PNG local si falla el WebP
+      el.src = pngUrl;
     } else {
+      // Si no hay nada válido, ocultamos el escudo
       el.style.visibility = "hidden";
       el.style.width = "0px";
       el.style.height = "0px";
@@ -56,7 +61,15 @@ export default function Estadisticas({
 
   return (
     <section style={{ padding: "12px 8px" }}>
-      <div style={{ display: "flex", gap: 10, justifyContent: "center", alignItems: "center", marginBottom: 12 }}>
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+          justifyContent: "center",
+          alignItems: "center",
+          marginBottom: 12
+        }}
+      >
         <label>Ver:</label>
         <select value={statsView} onChange={(e) => setStatsView(e.target.value)}>
           <option value="valla">Valla menos vencida</option>
@@ -83,8 +96,8 @@ export default function Estadisticas({
           </thead>
           <tbody>
             {rows.map((t, idx) => {
-              const baseUrl = logoFromName(t.equipo);   // remoto o local
-              const primary = toWebpFirst(baseUrl);     // solo cambia si es local
+              const baseUrl = logoFromName(t.equipo);   // remoto o local (png)
+              const primary = toWebpFirst(baseUrl);     // si es local, intenta .webp primero
               return (
                 <tr key={t.team_id}>
                   <td>{idx + 1}</td>
