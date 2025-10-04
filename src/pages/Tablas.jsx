@@ -6,8 +6,6 @@ export default function Tablas({
   setEquipoDetalleId, setEquipoDetalleNombre, prevScrollRef,
   layout, leftWrapRef, rightWrapRef, commonHeight
 }) {
-  // Ancho bajo el cual ocultamos la columna "Equipo"
-  // (Más alto para móviles, compacta mejor)
   const HIDE_NAME_BREAKPOINT = 720;
 
   const getHidden = () =>
@@ -34,13 +32,13 @@ export default function Tablas({
     };
   }, []);
 
-  // Prefiere .webp y cae a .png si falla
-  const toWebpFirst = (pngLikeUrl) => {
-    if (!pngLikeUrl) return pngLikeUrl;
-    // si ya viene .webp, lo dejamos
-    if (/\.webp(\?.*)?$/i.test(pngLikeUrl)) return pngLikeUrl;
-    // si termina en .png -> cámbialo a .webp
-    return pngLikeUrl.replace(/\.png(\?.*)?$/i, ".webp$1");
+  // WebP-first SOLO para rutas locales
+  const toWebpFirst = (url) => {
+    if (!url) return url;
+    if (url.startsWith("/")) {
+      return url.replace(/\.png(\?.*)?$/i, ".webp$1");
+    }
+    return url; // remota (logo_url), no tocar
   };
 
   const tableFont = {
@@ -72,15 +70,14 @@ export default function Tablas({
     window.scrollTo({ top: 0, behavior: "auto" });
   };
 
-  // Imagen: intenta .webp → cae a .png → si falla, oculta
+  // Fallback: si la URL es local .webp, cae a .png; si es remota y falla, ocúltalo
   const onShieldError = (e, originalPngUrl) => {
     const el = e.currentTarget;
+    const isLocal = el.src.startsWith(window.location.origin) || el.src.startsWith("/");
     const isWebp = /\.webp(\?.*)?$/i.test(el.src);
-    if (isWebp) {
-      // probar con .png (el original que nos pasó App/prop)
+    if (isLocal && isWebp) {
       el.src = originalPngUrl;
     } else {
-      // ocultar si también falló png
       el.style.visibility = "hidden";
       el.style.width = "0px";
       el.style.height = "0px";
@@ -95,10 +92,9 @@ export default function Tablas({
       <h2 style={titleFont}>{titulo}</h2>
       <table className="compacta compacta--pos" style={tableFont}>
         <colgroup>
-          {/* columnas más estrechas para caber en móviles */}
           <col style={{ width: 40 }} />   {/* POS */}
           <col style={{ width: 36 }} />   {/* ESC */}
-          {!hideNameCol && <col />}       {/* EQUIPO (solo si no se oculta) */}
+          {!hideNameCol && <col />}       {/* EQUIPO */}
           <col style={{ width: 36 }} />   {/* PTS */}
           <col style={{ width: 36 }} />   {/* PJ */}
           <col style={{ width: 36 }} />   {/* PG */}
@@ -127,8 +123,9 @@ export default function Tablas({
 
         <tbody>
           {ordenarTabla(data).map((t, i) => {
-            const pngUrl = logoFromName(t.equipo);              // viene .png desde App.jsx
-            const webpFirst = toWebpFirst(pngUrl);              // probamos .webp primero
+            // Puede ser remota (logo_url) o local /logos/*.png
+            const baseUrl = logoFromName(t.equipo);
+            const webpFirst = toWebpFirst(baseUrl);
             return (
               <tr key={t.team_id}>
                 <td>{i + 1}</td>
@@ -141,7 +138,7 @@ export default function Tablas({
                     src={webpFirst}
                     alt={`Escudo ${t.equipo}`}
                     className="escudo"
-                    onError={(e) => onShieldError(e, pngUrl)}
+                    onError={(e) => onShieldError(e, baseUrl)}
                   />
                 </td>
 

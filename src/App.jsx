@@ -100,7 +100,8 @@ function App() {
   }, []);
 
   const recargarPublico = async () => {
-    const { data: teams } = await supabase.from("teams").select("id,name,group_label");
+    // ⬇️ IMPORTANTE: traemos logo_url también
+    const { data: teams } = await supabase.from("teams").select("id,name,group_label,logo_url");
     const { data: standings } = await supabase.from("initial_standings").select("*");
     const { data: matches } = await supabase.from("matches").select("*").order("match_datetime", { ascending: true });
     setEquiposTodos(teams || []);
@@ -133,20 +134,30 @@ function App() {
     setPartidos(matches || []);
   };
 
-  // Helpers públicos fuera de Programación
+  // Helpers
   const slugify = (s) => (s || "").toString().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .toLowerCase().replace(/[^a-z0-9\s-]/g, "").trim().replace(/\s+/g, "-");
-  const logoFromName = (name) => `/logos/${slugify(name)}.png`; // se mantiene
+
+  // ⬇️ DEVUELVE logo_url si existe; si no, tu archivo local PNG (compat)
+  const logoFromName = (name) => {
+    const t = (equiposTodos || []).find((x) => x.name === name);
+    if (t?.logo_url) return t.logo_url; // remoto (no tocar extensión)
+    return `/logos/${slugify(name)}.png`; // local (luego cada vista puede probar .webp primero)
+  };
+
   const nombreEquipo = (id) => equiposTodos.find((t) => t.id === id)?.name || "??";
   const logoFromTeamId = (id) => logoFromName(nombreEquipo(id));
 
-  // ==== Helpers WebP-first (sin romper API existente) ====
+  // ==== Helpers WebP-first (solo para rutas locales) ====
   const toWebpFirst = (maybePng) =>
-    maybePng ? maybePng.replace(/\.png(\?.*)?$/i, ".webp$1") : maybePng;
+    maybePng && maybePng.startsWith("/")
+      ? maybePng.replace(/\.png(\?.*)?$/i, ".webp$1")
+      : maybePng;
+
   const onLogoError = (e, pngFallback, defaultIfPngFails = "/logos/_default.png") => {
     const el = e.currentTarget;
     if (/\.webp(\?.*)?$/i.test(el.src)) {
-      el.src = pngFallback; // cae a PNG
+      el.src = pngFallback; // cae a PNG si era local .webp
     } else {
       el.src = defaultIfPngFails; // default si también falla PNG
     }
@@ -154,7 +165,6 @@ function App() {
 
   // Header público solo cuando NO es landing ni /admin
   const showPublicHeader = !showLanding && path !== "/admin";
-
   return (
     <div className="App app-bg">
       {showPublicHeader && (
@@ -255,6 +265,8 @@ function App() {
                 .map((p) => {
                   const haveScore = p.home_score != null && p.away_score != null;
                   const nombre = (id) => nombreEquipo(id);
+
+                  // Usa el helper que puede devolver remoto o local:
                   const pngHome = logoFromName(nombre(p.home_team));
                   const pngAway = logoFromName(nombre(p.away_team));
                   const webpHome = toWebpFirst(pngHome);
@@ -337,6 +349,7 @@ function App() {
                   return b.gf - a.gf;
                 })
               }
+              // ⬇️ pasa helper que puede devolver remoto o local
               logoFromName={logoFromName}
               setEquipoDetalleId={setEquipoDetalleId}
               setEquipoDetalleNombre={setEquipoDetalleNombre}
@@ -354,6 +367,7 @@ function App() {
               grupoB={grupoB}
               statsView={statsView}
               setStatsView={setStatsView}
+              // ⬇️ igual aquí
               logoFromName={logoFromName}
             />
           )}
@@ -361,6 +375,7 @@ function App() {
           {activeTab === "programacion" && (
             <Programacion
               partidos={partidos}
+              // ⬇️ equipos incluyen logo_url ahora
               equipos={equiposTodos}
             />
           )}

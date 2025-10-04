@@ -13,16 +13,17 @@ export default function Programacion({ partidos, equipos }) {
       .trim()
       .replace(/\s+/g, "-");
 
-  const nombreEquipo = (id) => (equipos || []).find((t) => t.id === id)?.name || "??";
+  const teamById = (id) => (equipos || []).find((t) => t.id === id) || null;
+  const nombreEquipo = (id) => teamById(id)?.name || "??";
 
-  // Preferimos .webp con fallback a .png
-  const logoFromTeamIdWebpFirst = (id) => {
+  // Devuelve URL de logo: si hay logo_url (remoto) úsalo; si no, local .webp con fallback a .png
+  const getLogoUrls = (id) => {
+    const t = teamById(id);
+    if (t?.logo_url) {
+      return { primary: t.logo_url, fallback: "/logos/_default.png", isRemote: true };
+    }
     const base = `/logos/${slugify(nombreEquipo(id))}`;
-    return `${base}.webp`; // probamos primero .webp
-  };
-  const pngFallbackFromTeamId = (id) => {
-    const base = `/logos/${slugify(nombreEquipo(id))}`;
-    return `${base}.png`;  // fallback si falla webp
+    return { primary: `${base}.webp`, fallback: `${base}.png`, isRemote: false };
   };
 
   const ymdLocal = (dt) => {
@@ -159,11 +160,9 @@ export default function Programacion({ partidos, equipos }) {
                 {arr.map((p) => {
                   const haveScore = p.home_score != null && p.away_score != null;
 
-                  // URLs base
-                  const webpHome = logoFromTeamIdWebpFirst(p.home_team);
-                  const webpAway = logoFromTeamIdWebpFirst(p.away_team);
-                  const pngHome  = pngFallbackFromTeamId(p.home_team);
-                  const pngAway  = pngFallbackFromTeamId(p.away_team);
+                  // URLs (remotas si hay logo_url, locales si no)
+                  const homeLogo = getLogoUrls(p.home_team);
+                  const awayLogo = getLogoUrls(p.away_team);
 
                   return (
                     <li key={p.id} className="match-card hoverable" style={{ padding: 8 }}>
@@ -188,17 +187,17 @@ export default function Programacion({ partidos, equipos }) {
                       <div className="logos-row" style={{ gap: 8 }}>
                         <img
                           loading="lazy" decoding="async" fetchpriority="low"
-                          src={webpHome}
+                          src={homeLogo.primary}
                           alt={`Logo ${nombreEquipo(p.home_team)}`}
                           className="logo-img"
-                          /* AUMENTO de tamaño: antes clamp(36px, 7.5vw, 64px) */
                           style={{ width: "clamp(48px, 9vw, 88px)", height: "auto" }}
                           onError={(e) => {
                             const el = e.currentTarget;
-                            if (/\.webp(\?.*)?$/i.test(el.src)) {
-                              el.src = pngHome; // fallback a PNG
+                            // Si era local .webp, cae a .png; si era remoto, cae al default
+                            if (!homeLogo.isRemote && /\.webp(\?.*)?$/i.test(el.src)) {
+                              el.src = homeLogo.fallback;
                             } else {
-                              el.src = "/logos/_default.png"; // default si también falla
+                              el.src = "/logos/_default.png";
                             }
                           }}
                         />
@@ -214,15 +213,14 @@ export default function Programacion({ partidos, equipos }) {
                         </div>
                         <img
                           loading="lazy" decoding="async" fetchpriority="low"
-                          src={webpAway}
+                          src={awayLogo.primary}
                           alt={`Logo ${nombreEquipo(p.away_team)}`}
                           className="logo-img"
-                          /* AUMENTO de tamaño: antes clamp(36px, 7.5vw, 64px) */
                           style={{ width: "clamp(48px, 9vw, 88px)", height: "auto" }}
                           onError={(e) => {
                             const el = e.currentTarget;
-                            if (/\.webp(\?.*)?$/i.test(el.src)) {
-                              el.src = pngAway; // fallback a PNG
+                            if (!awayLogo.isRemote && /\.webp(\?.*)?$/i.test(el.src)) {
+                              el.src = awayLogo.fallback;
                             } else {
                               el.src = "/logos/_default.png";
                             }
@@ -239,7 +237,6 @@ export default function Programacion({ partidos, equipos }) {
                           gap: 6,
                           alignItems: "center",
                           textAlign: "center",
-                          /* REDUCCIÓN sutil del tamaño de fuente (antes clamp(12px, 2.2vw, 16px)) */
                           fontSize: "clamp(11px, 1.9vw, 14px)",
                           lineHeight: 1.1,
                         }}

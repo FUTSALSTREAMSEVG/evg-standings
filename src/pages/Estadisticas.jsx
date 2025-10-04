@@ -37,17 +37,17 @@ export default function Estadisticas({
   const lastColLabel = statsView === "goles" ? "GF" : "GC";
   const lastColColor = statsView === "goles" ? "#ffd7b5" : "#dfeaff";
 
-  // Helpers para WebP-first
+  // WebP-first SOLO locales
   const toWebpFirst = (url) =>
-    url ? url.replace(/\.png(\?.*)?$/i, ".webp$1") : url;
+    url && url.startsWith("/") ? url.replace(/\.png(\?.*)?$/i, ".webp$1") : url;
 
   const onShieldError = (e, pngUrl) => {
     const el = e.currentTarget;
+    const isLocal = el.src.startsWith(window.location.origin) || el.src.startsWith("/");
     const isWebp = /\.webp(\?.*)?$/i.test(el.src);
-    if (isWebp) {
-      el.src = pngUrl;           // fallback a PNG
+    if (isLocal && isWebp) {
+      el.src = pngUrl;           // fallback a PNG local
     } else {
-      // si tampoco hay PNG, ocúltalo (como antes)
       el.style.visibility = "hidden";
       el.style.width = "0px";
       el.style.height = "0px";
@@ -83,17 +83,17 @@ export default function Estadisticas({
           </thead>
           <tbody>
             {rows.map((t, idx) => {
-              const pngUrl = logoFromName(t.equipo);    // originalmente .png
-              const webpFirst = toWebpFirst(pngUrl);    // intenta .webp primero
+              const baseUrl = logoFromName(t.equipo);   // remoto o local
+              const primary = toWebpFirst(baseUrl);     // solo cambia si es local
               return (
                 <tr key={t.team_id}>
                   <td>{idx + 1}</td>
                   <td>
                     <img
-                      src={webpFirst}
+                      src={primary}
                       alt={`Escudo ${t.equipo}`}
                       className="escudo"
-                      onError={(e) => onShieldError(e, pngUrl)}
+                      onError={(e) => onShieldError(e, baseUrl)}
                     />
                   </td>
                   <td className="td-equipo">{t.equipo}</td>
