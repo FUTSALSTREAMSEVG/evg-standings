@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { supabase } from "../supabaseClient";
 
+/* ==================== UTILIDADES ==================== */
 function slugify(str = "") {
   return String(str)
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -10,21 +11,18 @@ function slugify(str = "") {
     .replace(/(^-|-$)+/g, "");
 }
 
+/* ==================== COMPONENTE ==================== */
 export default function AdminPage({ onExit }) {
   const [session, setSession] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(true);   // RLS OFF => no bloqueamos UI
+  const [checkingAdmin, setCheckingAdmin] = useState(false); // no usamos spinner
 
-  // Pestaña por defecto: "partidos"
+  // Tabs
   const [activeTab, setActiveTab] = useState("partidos");
 
-  // Datos
+  // Datos base
   const [equipos, setEquipos] = useState([]);
   const [partidos, setPartidos] = useState([]);
-
-  // ===== Temporadas =====
-  const [activeSeason, setActiveSeason] = useState(null); // {id,name,is_active,started_at}
-  const [seasonsList, setSeasonsList] = useState([]);
-  const [newSeasonName, setNewSeasonName] = useState("2025");
 
   // Crear partido
   const [grupo, setGrupo] = useState("A");
@@ -34,92 +32,102 @@ export default function AdminPage({ onExit }) {
   const [hora, setHora] = useState("");
   const [semana, setSemana] = useState(1);
 
-  // Edición partido
+  // Editar partido
   const [editando, setEditando] = useState(null);
   const [editDraft, setEditDraft] = useState(null);
 
-  // Filtro admin por semana
+  // Filtro semana
   const [semanaAdminSeleccionada, setSemanaAdminSeleccionada] = useState(null);
 
-  // ===== Gestión de Equipos =====
+  // Gestión de Equipos
   const [subiendoLogoId, setSubiendoLogoId] = useState(null);
   const [logoFiles, setLogoFiles] = useState({});
   const [localEdits, setLocalEdits] = useState({});
   const [nuevoNombre, setNuevoNombre] = useState("");
   const [nuevoGrupo, setNuevoGrupo] = useState("A");
 
-  // ======= Init =======
+  // Backups
+  const [backups, setBackups] = useState([]); // [{name, ts, pretty}]
+
+  /* =========== ENTRAR RÁPIDO (RLS OFF, sin bloquear UI) =========== */
+  const entrarRapido = () => {
+    setCheckingAdmin(false);
+    setIsAdmin(true);
+    setTimeout(() => { verificarAdmin(); }, 0); // verifica en segundo plano
+  };
+
+  /* ==================== AUTH + INIT ==================== */
   useEffect(() => {
+    let unsubAuth = null;
+
     (async () => {
       const { data } = await supabase.auth.getSession();
       setSession(data?.session || null);
-      if (data?.session?.user?.id) await verificarAdmin(data.session.user.id);
+      if (data?.session) entrarRapido();
+
+      const { data: sub } = supabase.auth.onAuthStateChange(async (_event, s) => {
+        setSession(s || null);
+        if (s) entrarRapido();
+        else { setIsAdmin(false); setCheckingAdmin(false); }
+      });
+      unsubAuth = sub?.subscription;
     })();
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_e, s) => {
-      setSession(s);
-      if (s?.user?.id) verificarAdmin(s.user.id);
-      else setIsAdmin(false);
-    });
-
     recargarTodo();
+    recargarBackups();
 
     const channel = supabase
       .channel("realtime-evg-admin")
       .on("postgres_changes", { event: "*", schema: "public", table: "matches" }, recargarTodo)
       .on("postgres_changes", { event: "*", schema: "public", table: "teams" }, recargarTodo)
-      .on("postgres_changes", { event: "*", schema: "public", table: "seasons" }, recargarTemporada)
+      .on("postgres_changes", { event: "*", schema: "public", table: "initial_standings" }, recargarTodo)
       .subscribe();
 
     return () => {
-      try { listener?.subscription?.unsubscribe(); } catch {}
+      try { unsubAuth?.unsubscribe?.(); } catch {}
       try { supabase.removeChannel(channel); } catch {}
+      try { supabase.removeAllChannels?.(); } catch {}
     };
   }, []);
 
-  const verificarAdmin = async (userId) => {
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("is_admin")
-      .eq("id", userId)
-      .single();
-    setIsAdmin(!error && !!data?.is_admin);
+  /* ==================== CERRAR SESIÓN ==================== */
+  const cerrarSesion = async () => {
+    try { await supabase.auth.signOut(); }
+    catch (e) { console.warn("signOut error:", e?.message || e); }
+    finally {
+      try { supabase.removeAllChannels?.(); } catch {}
+      setSession(null);
+      setIsAdmin(false);
+      window.location.reload(); // estado limpio sí o sí
+    }
   };
 
-  const recargarTemporada = async () => {
-    const { data: season } = await supabase
-      .from("seasons")
-      .select("id,name,is_active,started_at")
-      .eq("is_active", true)
-      .single();
-
-    setActiveSeason(season || null);
-    if (season?.name) setNewSeasonName(season.name);
-
-    const { data: allSeasons } = await supabase
-      .from("seasons")
-      .select("id,name,is_active,started_at")
-      .order("started_at", { ascending: false });
-
-    setSeasonsList(allSeasons || []);
+  /* ========== (Opcional) Verificación real en 2º plano ========== */
+  const verificarAdmin = async () => {
+    try {
+      const { data: ures } = await supabase.auth.getUser();
+      if (!ures?.user?.id) { setIsAdmin(false); return false; }
+      // Si tienes la RPC fn_is_admin activa, úsala:
+      const { data, error } = await supabase.rpc("fn_is_admin");
+      if (error) { console.warn("fn_is_admin error:", error?.message || error); return true; } // no bloquear
+      setIsAdmin(!!data);
+      return !!data;
+    } catch (e) {
+      console.warn("verificarAdmin exception:", e?.message || e);
+      return true; // no bloquees UI con RLS OFF
+    }
   };
 
+  /* ==================== DATA ==================== */
   const recargarTodo = async () => {
-    await recargarTemporada();
-
-    const seasonId = (await supabase
-      .from("seasons").select("id").eq("is_active", true).single()).data?.id;
-
     const { data: teams } = await supabase
       .from("teams")
-      .select("id,name,group_label,logo_url,season_id")
-      .eq("season_id", seasonId)
+      .select("id,name,group_label,logo_url")
       .order("name");
 
     const { data: matches } = await supabase
       .from("matches")
       .select("*")
-      .eq("season_id", seasonId)
       .order("match_datetime", { ascending: true });
 
     setEquipos(teams || []);
@@ -139,7 +147,7 @@ export default function AdminPage({ onExit }) {
     setSubiendoLogoId(null);
   };
 
-  // ===== Utils fechas =====
+  // Fechas utilidades
   const toLocalDate = (dt) => {
     if (!dt) return "";
     const d = new Date(dt);
@@ -165,7 +173,7 @@ export default function AdminPage({ onExit }) {
     return `${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}T${String(hh).padStart(2,"0")}:${String(mm).padStart(2,"0")}:00${sign}${oh}:${om}`;
   };
 
-  // ===== Rivales aún no jugados =====
+  // Rivales disponibles
   const equiposDelGrupo = useMemo(
     () => equipos.filter((t) => t.group_label === grupo),
     [equipos, grupo]
@@ -192,8 +200,7 @@ export default function AdminPage({ onExit }) {
       .filter((r) => r.id !== idEquipo1 && !yaJugaron(idEquipo1, r.id))
       .map((r) => r.name);
   }, [equiposDelGrupo, idEquipo1, equipo1, partidos]);
-
-  // ===== Crear partido =====
+  /* ==================== PARTIDOS ==================== */
   const guardarPartido = async () => {
     if (!equipo1 || !equipo2 || equipo1 === equipo2 || !fecha || !hora) return;
     const grupoTeams = equipos.filter((t) => t.group_label === grupo);
@@ -201,7 +208,7 @@ export default function AdminPage({ onExit }) {
     const t2 = grupoTeams.find((t) => t.name === equipo2);
     if (!t1 || !t2) return;
 
-    if (yaJugaron(t1.id, t2.id)) {
+    if ( yaJugaron(t1.id, t2.id) ) {
       alert("Estos equipos ya jugaron entre sí. Elige otro rival.");
       return;
     }
@@ -217,7 +224,6 @@ export default function AdminPage({ onExit }) {
         played: false,
         match_datetime: iso,
         week_number: semana,
-        // season_id se asigna por trigger en DB
       }]);
       if (error) throw error;
       setEquipo1(""); setEquipo2(""); setFecha(""); setHora(""); setSemana(1);
@@ -227,7 +233,6 @@ export default function AdminPage({ onExit }) {
     }
   };
 
-  // ===== Editar / Eliminar partido =====
   const empezarEdicion = (p) => {
     setEditando(p.id);
     setEditDraft({
@@ -237,6 +242,7 @@ export default function AdminPage({ onExit }) {
     });
   };
   const cancelarEdicion = () => { setEditando(null); setEditDraft(null); };
+
   const actualizarEdicion = async () => {
     if (!editDraft) return;
     const hasDate = !!editDraft.edit_date;
@@ -261,6 +267,7 @@ export default function AdminPage({ onExit }) {
       alert("Error al actualizar partido: " + (e?.message || e));
     }
   };
+
   const eliminarPartido = async (id) => {
     if (!window.confirm("¿Eliminar partido?")) return;
     try {
@@ -272,11 +279,11 @@ export default function AdminPage({ onExit }) {
     }
   };
 
-  // ===== Derivados =====
   const semanasDisponibles = useMemo(
     () => Array.from(new Set((partidos || []).map((m) => m.week_number).filter(Boolean))).sort((a,b)=>a-b),
     [partidos]
   );
+
   const partidosFiltrados = useMemo(() => {
     let base = [...partidos];
     if (typeof semanaAdminSeleccionada === "number") {
@@ -285,7 +292,7 @@ export default function AdminPage({ onExit }) {
     return base;
   }, [partidos, semanaAdminSeleccionada]);
 
-  // ===== Gestión equipos =====
+  /* ==================== EQUIPOS ==================== */
   const handleEditLocal = (teamId, field, value) => {
     setLocalEdits((prev) => ({
       ...prev,
@@ -359,7 +366,7 @@ export default function AdminPage({ onExit }) {
   async function crearEquipo() {
     if (!nuevoNombre.trim()) { alert("Escribe un nombre de equipo."); return; }
     const { error } = await supabase.from("teams")
-      .insert([{ name: nuevoNombre.trim(), group_label: nuevoGrupo }]); // season_id via trigger
+      .insert([{ name: nuevoNombre.trim(), group_label: nuevoGrupo }]);
     if (error) {
       alert("No se pudo crear el equipo: " + error.message);
       return;
@@ -386,16 +393,175 @@ export default function AdminPage({ onExit }) {
       alert("No se pudo eliminar el equipo: " + (e?.message || e));
     }
   }
-  // ===== Temporada: nueva =====
-  const confirmarYNuevaTemporada = async () => {
-    if (!newSeasonName.trim()) {
-      alert("Escribe un nombre para la temporada (ej. 2025, 2026-I).");
-      return;
+  /* ===================== BACKUP (máx 2) & RESET ===================== */
+
+  // Timestamp para nombres
+  const tsId = () => {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  };
+
+  // Lista backups
+  const recargarBackups = async () => {
+    const { data: files, error } = await supabase.storage.from("team-logos")
+      .list("_backups", { sortBy: { column: "name", order: "desc" }});
+    if (error) { setBackups([]); return; }
+
+    const parseTs = (ts) => {
+      const y = ts.slice(0,4), mo = ts.slice(4,6), d = ts.slice(6,8);
+      const hh = ts.slice(9,11), mm = ts.slice(11,13), ss = ts.slice(13,15);
+      return `${y}-${mo}-${d} ${hh}:${mm}:${ss}`;
+    };
+
+    const list = (files || [])
+      .filter(f => /^league-\d{8}-\d{6}\.json$/.test(f.name))
+      .map(f => {
+        const m = f.name.match(/^league-(\d{8}-\d{6})\.json$/);
+        const ts = m ? m[1] : null;
+        return { name: f.name, ts, pretty: ts ? parseTs(ts) : "—" };
+      })
+      .sort((a,b)=> (a.name < b.name ? 1 : -1))
+      .slice(0, 2);
+
+    setBackups(list);
+  };
+
+  // Listar logos del bucket raíz
+  const listarLogos = async () => {
+    const bucket = supabase.storage.from("team-logos");
+    let page = 0;
+    const files = [];
+    while (true) {
+      const { data, error } = await bucket.list("", { limit: 100, offset: 100 * page });
+      if (error) break;
+      if (!data || data.length === 0) break;
+      files.push(...data.filter(f => !f.name.endsWith("/")).map(f => f.name));
+      if (data.length < 100) break;
+      page++;
+    }
+    return files;
+  };
+
+  const copiarLogos = async (fromPrefix, toPrefix) => {
+    const bucket = supabase.storage.from("team-logos");
+    if (!fromPrefix) {
+      const files = await listarLogos();
+      for (const name of files) {
+        const fromPath = name;
+        const toPath = toPrefix ? `${toPrefix}/${name}` : name;
+        const { error } = await bucket.copy(fromPath, toPath);
+        if (error) { /* ignora faltantes */ }
+      }
+    } else {
+      let offset = 0;
+      while (true) {
+        const { data, error } = await bucket.list(fromPrefix, { limit: 100, offset });
+        if (error || !data || data.length === 0) break;
+        for (const f of data) {
+          if (f.name.endsWith("/")) continue;
+          const fromPath = `${fromPrefix}/${f.name}`;
+          const toPath = toPrefix ? `${toPrefix}/${f.name}` : f.name;
+          const { error: e2 } = await bucket.copy(fromPath, toPath);
+          if (e2) { /* ignora faltantes */ }
+        }
+        if (data.length < 100) break;
+        offset += 100;
+      }
+    }
+  };
+
+  const borrarTodosLosLogos = async () => {
+    const bucket = supabase.storage.from("team-logos");
+    const files = await listarLogos();
+    if (files.length) await bucket.remove(files.map(n => ({ name: n })));
+  };
+
+  const fetchTodo = async () => {
+    const { data: teams } = await supabase.from("teams").select("*");
+    const { data: standings } = await supabase.from("initial_standings").select("*");
+    const { data: matches } = await supabase.from("matches").select("*");
+    return { teams: teams || [], standings: standings || [], matches: matches || [] };
+  };
+
+  const subirBackupJSON = async (obj, ts) => {
+    try {
+      const blob = new Blob([JSON.stringify(obj)], { type: "application/json" });
+      const path = `_backups/league-${ts}.json`;
+
+      const { data, error } = await supabase.storage
+        .from("team-logos")
+        .upload(path, blob, { upsert: true, contentType: "application/json" });
+
+      if (error) {
+        if (/row-level security/i.test(error.message)) {
+          throw new Error("Storage RLS bloqueó la subida (revisa policies INSERT en 'team-logos').");
+        }
+        if (/bucket/i.test(error.message) && /not found/i.test(error.message)) {
+          throw new Error("El bucket 'team-logos' no existe (nombre exacto).");
+        }
+        throw error;
+      }
+      if (!data?.path) throw new Error("El Storage subió pero no devolvió 'path'.");
+      return data.path;
+    } catch (e) {
+      console.error("subirBackupJSON:", e);
+      throw e;
+    }
+  };
+
+  const crearBackup = async () => {
+    const ts = tsId();
+
+    // 1) estado actual
+    const data = await fetchTodo();
+
+    // 2) copiar logos actuales -> carpeta del backup
+    await copiarLogos("", `team-logos-backup/${ts}`);
+
+    // 3) subir JSON
+    await subirBackupJSON({ ts, ...data }, ts);
+
+    // 4) mantener máx 2 (JSON + carpeta logos)
+    const { data: files } = await supabase.storage.from("team-logos")
+      .list("_backups", { sortBy: { column: "name", order: "desc" }});
+    const jsons = (files || [])
+      .filter(f => f.name.startsWith("league-") && f.name.endsWith(".json"))
+      .map(f => f.name)
+      .sort((a,b)=> (a < b ? 1 : -1));
+    const sobra = jsons.slice(2);
+    for (const name of sobra) {
+      await supabase.storage.from("team-logos").remove([`_backups/${name}`]);
+      const m = name.match(/^league-(\d{8}-\d{6})\.json$/);
+      const folder = m ? `team-logos-backup/${m[1]}` : null;
+      if (folder) {
+        let page = 0;
+        while (true) {
+          const { data: sub } = await supabase.storage.from("team-logos").list(folder, { limit: 100, offset: 100 * page });
+          if (!sub || sub.length === 0) break;
+          await supabase.storage.from("team-logos").remove(sub.map(f => `${folder}/${f.name}`));
+          if (sub.length < 100) break;
+          page++;
+        }
+      }
     }
 
+    await recargarBackups();
+    return { ts };
+  };
+
+  const crearBackupManual = async () => {
+    try {
+      const { ts } = await crearBackup();
+      alert(`Backup creado correctamente (${ts}).`);
+    } catch (e) {
+      alert("No se pudo crear el backup: " + (e?.message || e));
+    }
+  };
+
+  const resetearLigaConBackup = async () => {
     const ok = window.confirm(
-      `¿Estás seguro de iniciar la nueva temporada "${newSeasonName}"?\n` +
-      `Se desactivará la temporada actual (${activeSeason?.name || "N/A"}) y todo comenzará en 0.`
+      "Esto hará un BACKUP y luego borrará TODOS los equipos, posiciones iniciales, partidos y logos. ¿Continuar?"
     );
     if (!ok) return;
 
@@ -407,44 +573,160 @@ export default function AdminPage({ onExit }) {
       const { error: authErr } = await supabase.auth.signInWithPassword({ email, password: pass });
       if (authErr) { alert("Clave incorrecta."); return; }
 
-      const { error: rpcErr } = await supabase.rpc("start_new_season", { season_name: newSeasonName.trim() });
-      if (rpcErr) { alert("No se pudo iniciar la nueva temporada: " + rpcErr.message); return; }
+      await crearBackup();
 
-      alert(`Nueva temporada "${newSeasonName}" activada.`);
+      const { matches, standings, teams } = await fetchTodo();
+      const delByIds = async (table, ids) => {
+        for (let i=0;i<ids.length;i+=1000) {
+          const batch = ids.slice(i, i+1000);
+          const { error } = await supabase.from(table).delete().in("id", batch);
+          if (error) throw new Error(error.message);
+        }
+      };
+      if (matches.length) await delByIds("matches", matches.map(m=>m.id));
+      if (standings.length) await delByIds("initial_standings", standings.map(s=>s.id));
+      if (teams.length) await delByIds("teams", teams.map(t=>t.id));
+
+      await borrarTodosLosLogos();
+
+      alert("Liga reseteada. Todo quedó en 0. Ahora puedes cargar equipos nuevos.");
       await recargarTodo();
       setActiveTab("equipos");
     } catch (e) {
-      alert("Error al iniciar nueva temporada: " + (e?.message || e));
+      alert("No se pudo resetear: " + (e?.message || e));
     }
   };
+  /* ===================== DESCARGAS & RESTAURACIÓN ===================== */
 
-  // ===== Temporada: activar anterior =====
-  const activarTemporada = async (seasonId, seasonName) => {
-    const ok = window.confirm(
-      `¿Seguro que quieres activar la temporada "${seasonName}"?\n` +
-      `Se desactivará la temporada actual (${activeSeason?.name || "N/A"}).`
-    );
-    if (!ok) return;
-
-    const email = session?.user?.email || "";
-    const pass = window.prompt(`Por seguridad, ingresa la CLAVE de ${email} para confirmar:`);
-    if (!pass) { alert("Operación cancelada."); return; }
-
+  // Descargar JSON (nombre amigable)
+  const downloadBackup = async (name, tsHint) => {
     try {
-      const { error: authErr } = await supabase.auth.signInWithPassword({ email, password: pass });
-      if (authErr) { alert("Clave incorrecta."); return; }
+      const { data, error } = await supabase.storage.from("team-logos")
+        .createSignedUrl(`_backups/${name}`, 60);
+      let url = data?.signedUrl;
 
-      const { error: rpcErr } = await supabase.rpc("set_active_season", { p_season_id: seasonId });
-      if (rpcErr) { alert("No se pudo activar la temporada: " + rpcErr.message); return; }
+      if (error || !url) {
+        const pub = supabase.storage.from("team-logos").getPublicUrl(`_backups/${name}`);
+        url = pub?.data?.publicUrl;
+        if (!url) throw new Error("No fue posible generar un enlace de descarga.");
+      }
 
-      alert(`Temporada "${seasonName}" activada.`);
-      await recargarTodo();
-      setActiveTab("equipos");
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("No se pudo descargar el backup.");
+      const blob = await res.blob();
+
+      const ts = tsHint || (name.match(/^league-(\d{8}-\d{6})\.json$/)?.[1] ?? "FECHA");
+      const filename = `EVG-backup-${ts}.json`;
+
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(link.href);
     } catch (e) {
-      alert("Error al activar temporada: " + (e?.message || e));
+      alert("No fue posible descargar el backup: " + (e?.message || e));
     }
   };
 
+  // Descargar logos (zip) del mismo timestamp
+  const ensureJSZip = () =>
+    new Promise((resolve, reject) => {
+      if (window.JSZip) return resolve(window.JSZip);
+      const s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js";
+      s.onload = () => resolve(window.JSZip);
+      s.onerror = () => reject(new Error("No se pudo cargar JSZip"));
+      document.head.appendChild(s);
+    });
+
+  const downloadLogosZip = async (ts) => {
+    try {
+      if (!ts) { alert("Este backup no tiene timestamp."); return; }
+      const JSZip = await ensureJSZip();
+      const zip = new JSZip();
+
+      const prefix = `team-logos-backup/${ts}`;
+      let offset = 0;
+      while (true) {
+        const { data, error } = await supabase.storage.from("team-logos")
+          .list(prefix, { limit: 100, offset });
+        if (error) throw new Error(error.message);
+        if (!data || data.length === 0) break;
+
+        for (const f of data) {
+          if (f.name.endsWith("/")) continue;
+          const path = `${prefix}/${f.name}`;
+          const { data: fileBlob, error: dlErr } = await supabase.storage.from("team-logos").download(path);
+          if (dlErr) { console.warn("No se pudo bajar", path, dlErr.message); continue; }
+          const arrayBuf = await fileBlob.arrayBuffer();
+          zip.file(f.name, arrayBuf);
+        }
+
+        if (data.length < 100) break;
+        offset += 100;
+      }
+
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(zipBlob);
+      link.download = `EVG-logos-${ts}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(link.href);
+    } catch (e) {
+      alert("No se pudo generar el ZIP de logos: " + (e?.message || e));
+    }
+  };
+
+  // Restaurar desde archivo (.json)
+  const restaurarDesdeArchivo = async (fileOrBlob) => {
+    try {
+      const text = await (fileOrBlob.text ? fileOrBlob.text() : new Response(fileOrBlob).text());
+      const backup = JSON.parse(text);
+
+      // Restaurar logos si hay carpeta con ese ts
+      if (backup.ts) {
+        await copiarLogos(`team-logos-backup/${backup.ts}`, "");
+      }
+
+      // Limpiar actuales
+      const { matches, standings, teams } = await fetchTodo();
+      const delByIds = async (table, ids) => {
+        for (let i=0;i<ids.length;i+=1000) {
+          const batch = ids.slice(i, i+1000);
+          const { error } = await supabase.from(table).delete().in("id", batch);
+          if (error) throw new Error(error.message);
+        }
+      };
+      if (matches.length) await delByIds("matches", matches.map(m=>m.id));
+      if (standings.length) await delByIds("initial_standings", standings.map(s=>s.id));
+      if (teams.length) await delByIds("teams", teams.map(t=>t.id));
+
+      // Insertar respaldo tal cual estaba
+      if (backup.teams?.length) {
+        const { error } = await supabase.from("teams").insert(backup.teams);
+        if (error) throw new Error("Teams: " + error.message);
+      }
+      if (backup.standings?.length) {
+        const { error } = await supabase.from("initial_standings").insert(backup.standings);
+        if (error) throw new Error("Initial_standings: " + error.message);
+      }
+      if (backup.matches?.length) {
+        const { error } = await supabase.from("matches").insert(backup.matches);
+        if (error) throw new Error("Matches: " + error.message);
+      }
+
+      alert("Backup restaurado correctamente.");
+      await recargarTodo();
+    } catch (e) {
+      alert("No se pudo restaurar desde el archivo: " + (e?.message || e));
+    }
+  };
+
+  // UI helper botón de tabs
   const TabButton = ({ id, children }) => (
     <button
       onClick={() => setActiveTab(id)}
@@ -462,10 +744,9 @@ export default function AdminPage({ onExit }) {
     </button>
   );
   TabButton.propTypes = { id: PropTypes.string.isRequired, children: PropTypes.node.isRequired };
-
   return (
     <div>
-      {/* HEADER */}
+      {/* HEADER (visual intacto) */}
       <header className="app-header">
         <div />
         <div className="brand-line">
@@ -483,96 +764,121 @@ export default function AdminPage({ onExit }) {
         <div style={{ justifySelf: "end", display: "flex", gap: 8 }}>
           <button onClick={onExit} style={{ marginRight: 8 }}>Inicio</button>
           {session && (
-            <button
-              onClick={async () => {
-                await supabase.auth.signOut();
-                setSession(null);
-                setIsAdmin(false);
-              }}
-            >
-              Cerrar sesión
-            </button>
+            <button onClick={cerrarSesion}>Cerrar sesión</button>
           )}
         </div>
       </header>
 
       <section style={{ padding: 16 }}>
         {!session ? (
-          <Login onLogged={(s) => setSession(s)} />
-        ) : !isAdmin ? (
-          <div className="panel center-max-900" style={{ textAlign: "center", margin: "24px auto" }}>
-            <p style={{ color: "red" }}>No tienes permisos de administrador.</p>
-          </div>
+          <Login onLogged={(s) => { setSession(s); entrarRapido(); }} />
         ) : (
           <>
-            {/* ORDEN: Partidos → Gestión de Equipos → Temporada */}
+            {/* Tabs */}
             <div className="center-max-900" style={{ display: "flex", gap: 10, justifyContent: "center", marginBottom: 14 }}>
               <TabButton id="partidos">Partidos</TabButton>
               <TabButton id="equipos">Gestión de Equipos</TabButton>
               <TabButton id="temporada">Temporada</TabButton>
             </div>
 
-            {/* ======== GESTIÓN DE TEMPORADA ======== */}
+            {/* ======== TEMPORADA ======== */}
             {activeTab === "temporada" && (
               <div className="panel center-max-900" style={{ marginBottom: 16 }}>
                 <h3 style={{ textAlign: "center", marginBottom: 10 }}>GESTIÓN DE TEMPORADA</h3>
 
                 <div style={{ textAlign: "center", marginBottom: 14 }}>
-                  <div style={{ opacity: 0.9, marginBottom: 6 }}>
-                    Temporada activa: <strong>{activeSeason?.name || "—"}</strong>
-                  </div>
+                  <p style={{ fontSize: 12, opacity: 0.8 }}>
+                    Máximo <strong>2</strong> backups. Puedes <strong>crear</strong>, <strong>descargar</strong> y <strong>restaurar</strong>.
+                  </p>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
-                    <input
-                      placeholder="Nombre de nueva temporada (ej. 2025, 2026-I)"
-                      value={newSeasonName}
-                      onChange={(e) => setNewSeasonName(e.target.value)}
-                      style={{ minWidth: 240 }}
-                    />
-                    <button onClick={confirmarYNuevaTemporada}>
-                      Iniciar nueva temporada
+                    <button onClick={crearBackupManual}>Crear backup ahora</button>
+                    <button onClick={resetearLigaConBackup} style={{ background: "#a33" }}>
+                      Resetear liga (con backup)
+                    </button>
+                    <button onClick={async () => {
+                      const ok = window.confirm("Esto restaurará el **último** backup guardado en Storage. ¿Continuar?");
+                      if (!ok) return;
+                      try {
+                        if (!backups.length) { alert("No hay backups disponibles."); return; }
+                        const last = backups[0];
+                        const { data, error } = await supabase.storage.from("team-logos")
+                          .download(`_backups/${last.name}`);
+                        if (error) throw new Error(error.message);
+                        await restaurarDesdeArchivo(data);
+                      } catch (e) {
+                        alert("No se pudo restaurar: " + (e?.message || e));
+                      }
+                    }}>
+                      Restaurar último backup
                     </button>
                   </div>
-                  <p style={{ fontSize: 12, opacity: 0.7, marginTop: 8 }}>
-                    Al iniciar o activar una temporada, todo lo nuevo se liga a esa temporada.
-                    Las tablas arrancan en 0 y el historial se conserva. Se pedirá tu clave para confirmar.
-                  </p>
                 </div>
 
-                <hr style={{ borderColor: "rgba(255,255,255,0.1)", margin: "10px 0 14px" }} />
+                {/* Lista de backups (máx 2) */}
+                <div className="panel" style={{ maxWidth: 900, margin: "0 auto 12px auto" }}>
+                  <h4 style={{ textAlign: "center", marginBottom: 8 }}>Backups recientes (máx 2)</h4>
+                  {backups.length === 0 ? (
+                    <p style={{ textAlign: "center", opacity: 0.75 }}>No hay backups.</p>
+                  ) : (
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                      <thead>
+                        <tr style={{ opacity: 0.85 }}>
+                          <th style={{ textAlign: "left", padding: "6px 8px" }}>Archivo</th>
+                          <th style={{ textAlign: "left", padding: "6px 8px" }}>Fecha y hora</th>
+                          <th style={{ textAlign: "left", padding: "6px 8px" }}>Acciones</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {backups.map((bk) => (
+                          <tr key={bk.name} style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                            <td style={{ padding: "6px 8px" }}>{bk.name}</td>
+                            <td style={{ padding: "6px 8px" }}>{bk.pretty}</td>
+                            <td style={{ padding: "6px 8px" }}>
+                              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                <button onClick={() => downloadBackup(bk.name, bk.ts)}>Descargar JSON</button>
+                                <button onClick={() => downloadLogosZip(bk.ts)}>Descargar logos</button>
+                                <button onClick={async () => {
+                                  try {
+                                    const { data, error } = await supabase.storage.from("team-logos")
+                                      .download(`_backups/${bk.name}`);
+                                    if (error) throw new Error(error.message);
+                                    await restaurarDesdeArchivo(data);
+                                  } catch (e) {
+                                    alert("No se pudo restaurar este backup: " + (e?.message || e));
+                                  }
+                                }}>
+                                  Restaurar este
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
 
-                <h4 style={{ textAlign: "center", marginBottom: 8 }}>Temporadas anteriores</h4>
-                {seasonsList.filter(s => !s.is_active).length === 0 ? (
-                  <p style={{ textAlign: "center", color: "#bbb" }}>No hay temporadas anteriores.</p>
-                ) : (
-                  <div style={{ display: "grid", gap: 8, maxWidth: 640, margin: "0 auto" }}>
-                    {seasonsList
-                      .filter(s => !s.is_active)
-                      .map((s) => (
-                        <div
-                          key={s.id}
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            padding: "8px 10px",
-                            border: "1px solid rgba(255,255,255,0.12)",
-                            borderRadius: 10,
-                            background: "rgba(255,255,255,0.04)"
-                          }}
-                        >
-                          <div>
-                            <div style={{ fontWeight: 700 }}>{s.name}</div>
-                            <div style={{ fontSize: 12, opacity: 0.7 }}>
-                              Inició: {new Date(s.started_at).toLocaleString()}
-                            </div>
-                          </div>
-                          <button onClick={() => activarTemporada(s.id, s.name)}>
-                            Activar
-                          </button>
-                        </div>
-                      ))}
+                {/* Restaurar desde archivo (.json) */}
+                <div className="panel" style={{ maxWidth: 900, margin: "0 auto" }}>
+                  <h4 style={{ textAlign: "center", marginBottom: 8 }}>Restaurar desde archivo (.json)</h4>
+                  <div style={{ display: "flex", justifyContent: "center", gap: 8, flexWrap: "wrap" }}>
+                    <input
+                      type="file"
+                      accept="application/json"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const ok = window.confirm("Esto reemplazará por completo el estado actual con el del archivo. ¿Continuar?");
+                        if (!ok) return;
+                        restaurarDesdeArchivo(file);
+                        e.target.value = "";
+                      }}
+                    />
                   </div>
-                )}
+                  <p style={{ fontSize: 12, opacity: 0.7, marginTop: 8, textAlign: "center" }}>
+                    Tip: descarga un backup (JSON + logos ZIP) y podrás restaurar cuando quieras.
+                  </p>
+                </div>
               </div>
             )}
 
@@ -627,7 +933,6 @@ export default function AdminPage({ onExit }) {
                                     else e.currentTarget.src = "/logos/_default.png";
                                   }}
                                 />
-                                {/* (Eliminado el enlace "ver logo_url") */}
                               </div>
                             </td>
                             <td style={{ padding: "6px 8px", minWidth: 220 }}>
@@ -675,7 +980,7 @@ export default function AdminPage({ onExit }) {
               </div>
             )}
 
-            {/* ======== PARTIDOS ======== */}
+            {/* ======== PARTIDOS (tarjetas) ======== */}
             {activeTab === "partidos" && (
               <>
                 {/* CREAR PARTIDO */}
@@ -715,7 +1020,7 @@ export default function AdminPage({ onExit }) {
                   </div>
                 </div>
 
-                {/* FILTRO SEMANA */}
+                {/* Filtro Semana */}
                 <div style={{ marginTop: 12, textAlign: "center" }}>
                   <label style={{ marginRight: 8 }}>Ver (Admin):</label>
                   <select
@@ -729,7 +1034,7 @@ export default function AdminPage({ onExit }) {
                   </select>
                 </div>
 
-                {/* LISTA / EDICIÓN */}
+                {/* LISTA / EDICIÓN (tarjetas) */}
                 <div className="center-max-900" style={{ marginTop: 10 }}>
                   {(() => {
                     const ymd = (dt) => {
@@ -790,7 +1095,7 @@ export default function AdminPage({ onExit }) {
                                   </div>
                                 </div>
 
-                                {/* Solo nombres + marcador */}
+                                {/* Nombres + marcador */}
                                 <div
                                   className="names-row"
                                   style={{
@@ -892,6 +1197,7 @@ export default function AdminPage({ onExit }) {
 
 AdminPage.propTypes = { onExit: PropTypes.func.isRequired };
 
+/* ==================== LOGIN ==================== */
 function Login({ onLogged }) {
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
@@ -907,7 +1213,7 @@ function Login({ onLogged }) {
               try {
                 const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
                 if (error) { alert("Error: " + error.message); return; }
-                onLogged(data.session || null);
+                onLogged(data.session || null); // el padre llama entrarRapido()
               } catch {
                 alert("Error al iniciar sesión");
               }

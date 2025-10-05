@@ -71,13 +71,20 @@ img{ display: block; }
 
 /* ====== Tabs ====== */
 .tabs-nav{
-  display: flex; gap: 8px; justify-content: center; align-items: center;
-  padding: 10px 8px; border-bottom: 1px solid rgba(255,255,255,0.06);
-  margin-bottom: 8px; position: relative; z-index: 1;
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+  padding: 10px 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  margin-bottom: 8px;
+  position: relative;
+  z-index: 1;
+
+  /* ← SIN scroll; una sola fila que se ADAPTA */
+  flex-wrap: nowrap;          /* una fila */
 }
-/* Inactivas: blanco 90% con letras negras */
 .tab-btn{
-  padding: 10px 16px;
   border-radius: 999px;
   border: 1px solid #222;
   background: rgba(255,255,255,0.90);
@@ -85,9 +92,16 @@ img{ display: block; }
   font-weight: 800;
   letter-spacing: .2px;
   text-transform: uppercase;
+
+  /* ==== CLAVE PARA ADAPTARSE SIN SCROLL ==== */
+  flex: 1 1 0;                /* se reparten el ancho y se encogen */
+  min-width: 0;               /* permite reducirse sin forzar ancho mínimo */
+  white-space: nowrap;        /* no rompe palabra */
+  font-size: clamp(9px, 2.2vw, 14px);     /* reduce tipografía en pantallas chicas */
+  line-height: 1.05;
+  padding: clamp(5px, 1.2vw, 10px) clamp(8px, 2.2vw, 16px); /* padding adaptable */
 }
 .tab-btn:hover{ filter: brightness(0.98); }
-/* Activa: naranjado oscuro con texto blanco */
 .tab-btn.active{
   border-color: #8a3c0d;
   background: var(--brand-orange-dark);
@@ -227,6 +241,7 @@ img.escudo{ width: 24px; height: 24px; object-fit: contain; }
 
 /* Click al equipo (detalle) */
 .td-equipo-link{ cursor: pointer; color: var(--brand-orange); font-weight: 700; text-shadow: 0 1px 0 rgba(0,0,0,0.45); }
+
 /* ====== Tarjetas públicas / Programación ====== */
 .cards-grid{
   display: grid; grid-template-columns: minmax(300px, 760px);
@@ -497,4 +512,17 @@ table.compacta.compacta--pos tbody td:nth-child(11){
 @media (max-width: 380px){
   table.compacta thead th{ font-size: 10px; }
   table.compacta tbody td{ font-size: 11px; }
+}
+
+/* =========================
+   Header compacto
+   ========================= */
+.app-header button{
+  font-size: clamp(10px, 2.6vw, 13px);
+  padding: clamp(6px, 1.6vw, 8px) clamp(10px, 2.4vw, 14px);
+  border-radius: 999px;
+}
+.brand-title{ font-size: clamp(16px, 4.5vw, 22px); }
+@media (max-width: 480px){
+  .brand-line{ gap: 6px; }
 }
