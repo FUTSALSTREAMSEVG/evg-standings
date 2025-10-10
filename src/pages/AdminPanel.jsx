@@ -17,6 +17,9 @@ export default function AdminPage({ onExit }) {
   const [isAdmin, setIsAdmin] = useState(true);   // RLS OFF => no bloqueamos UI
   const [checkingAdmin, setCheckingAdmin] = useState(false); // no usamos spinner
 
+  // 🔹 NUEVO: micro-estado de carga
+  const [loading, setLoading] = useState(false);
+
   // Tabs
   const [activeTab, setActiveTab] = useState("partidos");
 
@@ -55,7 +58,6 @@ export default function AdminPage({ onExit }) {
     setIsAdmin(true);
     setTimeout(() => { verificarAdmin(); }, 0); // verifica en segundo plano
   };
-
   /* ==================== AUTH + INIT ==================== */
   useEffect(() => {
     let unsubAuth = null;
@@ -120,33 +122,39 @@ export default function AdminPage({ onExit }) {
 
   /* ==================== DATA ==================== */
   const recargarTodo = async () => {
-    const { data: teams } = await supabase
-      .from("teams")
-      .select("id,name,group_label,logo_url")
-      .order("name");
+    // 🔹 NUEVO: activar loading
+    setLoading(true);
+    try {
+      const { data: teams } = await supabase
+        .from("teams")
+        .select("id,name,group_label,logo_url")
+        .order("name");
 
-    const { data: matches } = await supabase
-      .from("matches")
-      .select("*")
-      .order("match_datetime", { ascending: true });
+      const { data: matches } = await supabase
+        .from("matches")
+        .select("*")
+        .order("match_datetime", { ascending: true });
 
-    setEquipos(teams || []);
-    setPartidos(matches || []);
+      setEquipos(teams || []);
+      setPartidos(matches || []);
 
-    const weeks = Array.from(new Set((matches || [])
-      .map((m) => m.week_number)
-      .filter(Boolean)))
-      .sort((a,b)=>a-b);
+      const weeks = Array.from(new Set((matches || [])
+        .map((m) => m.week_number)
+        .filter(Boolean)))
+        .sort((a,b)=>a-b);
 
-    setSemanaAdminSeleccionada((prev) =>
-      typeof prev === "number" ? prev : (weeks[weeks.length - 1] ?? null)
-    );
+      setSemanaAdminSeleccionada((prev) =>
+        typeof prev === "number" ? prev : (weeks[weeks.length - 1] ?? null)
+      );
 
-    setLogoFiles({});
-    setLocalEdits({});
-    setSubiendoLogoId(null);
+      setLogoFiles({});
+      setLocalEdits({});
+      setSubiendoLogoId(null);
+    } finally {
+      // 🔹 NUEVO: desactivar loading
+      setLoading(false);
+    }
   };
-
   // Fechas utilidades
   const toLocalDate = (dt) => {
     if (!dt) return "";
@@ -267,7 +275,6 @@ export default function AdminPage({ onExit }) {
       alert("Error al actualizar partido: " + (e?.message || e));
     }
   };
-
   const eliminarPartido = async (id) => {
     if (!window.confirm("¿Eliminar partido?")) return;
     try {
@@ -401,7 +408,6 @@ export default function AdminPage({ onExit }) {
     const pad = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
   };
-
   // Lista backups
   const recargarBackups = async () => {
     const { data: files, error } = await supabase.storage.from("team-logos")
@@ -781,6 +787,13 @@ export default function AdminPage({ onExit }) {
               <TabButton id="temporada">Temporada</TabButton>
             </div>
 
+            {/* 🔹 NUEVO: panel de carga */}
+            {loading && (
+              <div className="panel center-max-900" style={{ textAlign: "center", marginBottom: 12 }}>
+                <p style={{ color: "#bbb" }}>Cargando datos…</p>
+              </div>
+            )}
+
             {/* ======== TEMPORADA ======== */}
             {activeTab === "temporada" && (
               <div className="panel center-max-900" style={{ marginBottom: 16 }}>
@@ -901,6 +914,13 @@ export default function AdminPage({ onExit }) {
                   </select>
                   <button onClick={crearEquipo}>Crear equipo</button>
                 </div>
+
+                {/* 🔹 NUEVO: estado "Sin equipos." */}
+                {!loading && (equipos?.length ?? 0) === 0 && (
+                  <div className="panel" style={{ textAlign: "center", marginBottom: 12 }}>
+                    <p style={{ color: "#bbb" }}>Sin equipos.</p>
+                  </div>
+                )}
 
                 {/* Tabla equipos */}
                 <div style={{ overflowX: "auto" }}>
@@ -1033,6 +1053,13 @@ export default function AdminPage({ onExit }) {
                     ))}
                   </select>
                 </div>
+
+                {/* 🔹 NUEVO: sin semanas cargadas */}
+                {!loading && semanasDisponibles.length === 0 && (
+                  <div className="panel center-max-900" style={{ textAlign: "center", marginTop: 10 }}>
+                    <p style={{ color: "#bbb" }}>No hay partidos cargados.</p>
+                  </div>
+                )}
 
                 {/* LISTA / EDICIÓN (tarjetas) */}
                 <div className="center-max-900" style={{ marginTop: 10 }}>

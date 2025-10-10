@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
 import PropTypes from "prop-types";
 
-export default function Programacion({ partidos, equipos }) {
+export default function Programacion({ partidos, equipos, isLoading = false, isAdmin = false }) {
   // ===== Helpers =====
   const slugify = (s) =>
     (s || "")
@@ -87,6 +87,12 @@ export default function Programacion({ partidos, equipos }) {
   const etiquetaSemana = () =>
     typeof semanaSeleccionada === "number" ? `Semana ${semanaSeleccionada}` : "-";
 
+  // ===== Micro-estados =====
+  const showCargando = !!isLoading;
+  const showSinEquipos = !isLoading && (equipos?.length ?? 0) === 0;
+  const showSinSemanas = !isLoading && (semanasDisponibles.length === 0);
+  const showSinPartidosSemana = !isLoading && !showSinSemanas && (gruposDia.length === 0);
+
   // ===== UI =====
   return (
     <section className="tables-grid section-programacion">
@@ -113,6 +119,39 @@ export default function Programacion({ partidos, equipos }) {
         </h3>
       </div>
 
+      {/* Paneles de micro-estado */}
+      {showCargando && (
+        <div className="panel" style={{ gridColumn: "1 / -1", textAlign: "center" }}>
+          <p style={{ color: "#bbb" }}>Cargando datos…</p>
+        </div>
+      )}
+
+      {showSinEquipos && (
+        <div className="panel" style={{ gridColumn: "1 / -1", textAlign: "center" }}>
+          <p style={{ color: "#bbb" }}>Sin equipos.</p>
+          {isAdmin && (
+            <div style={{ marginTop: 8 }}>
+              <a href="/admin">
+                <button>Ir al Panel Admin para cargar equipos</button>
+              </a>
+            </div>
+          )}
+        </div>
+      )}
+
+      {showSinSemanas && !showSinEquipos && !showCargando && (
+        <div className="panel" style={{ gridColumn: "1 / -1", textAlign: "center" }}>
+          <p style={{ color: "#bbb" }}>No hay partidos cargados.</p>
+          {isAdmin && (
+            <div style={{ marginTop: 8 }}>
+              <a href="/admin">
+                <button>Crear partidos en Admin</button>
+              </a>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* DÍAS */}
       <div
         className="days-grid"
@@ -126,9 +165,9 @@ export default function Programacion({ partidos, equipos }) {
           padding: "0 8px",
         }}
       >
-        {gruposDia.length === 0 ? (
+        {showSinPartidosSemana ? (
           <div className="panel" style={{ gridColumn: "1 / -1", textAlign: "center" }}>
-            <p style={{ color: "#bbb" }}>No hay partidos para el filtro seleccionado.</p>
+            <p style={{ color: "#bbb" }}>No hay partidos esta semana.</p>
           </div>
         ) : (
           gruposDia.map(([diaKey, arr]) => (
@@ -296,4 +335,6 @@ export default function Programacion({ partidos, equipos }) {
 Programacion.propTypes = {
   partidos: PropTypes.array.isRequired,
   equipos: PropTypes.array.isRequired,
+  isLoading: PropTypes.bool,
+  isAdmin: PropTypes.bool,
 };

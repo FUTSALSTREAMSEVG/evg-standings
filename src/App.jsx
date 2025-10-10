@@ -9,6 +9,7 @@ import Estadisticas from "./pages/Estadisticas.jsx";
 import Programacion from "./pages/Programacion.jsx";
 import Grupos from "./pages/Grupos.jsx";
 import AdminPage from "./pages/AdminPanel.jsx"; // /admin como página completa
+import DetalleEquipo from "./pages/DetalleEquipo.jsx"; // <-- ÚNICO IMPORT NUEVO
 
 function App() {
   // ===== Estado público =====
@@ -16,6 +17,9 @@ function App() {
   const [grupoB, setGrupoB] = useState([]);
   const [partidos, setPartidos] = useState([]);
   const [equiposTodos, setEquiposTodos] = useState([]);
+
+  // NEW: loading global para micro-estados públicos
+  const [isLoadingPublic, setIsLoadingPublic] = useState(true);
 
   // Auth (para "Cerrar sesión" en headers públicos)
   const [session, setSession] = useState(null);
@@ -101,48 +105,53 @@ function App() {
   }, []);
 
   const recargarPublico = async () => {
-    // 🔧 Aquí el cambio: también traemos logo_url
-    const { data: teams } = await supabase
-      .from("teams")
-      .select("id,name,group_label,logo_url");
+    setIsLoadingPublic(true);
+    try {
+      // 🔧 también traemos logo_url
+      const { data: teams } = await supabase
+        .from("teams")
+        .select("id,name,group_label,logo_url");
 
-    const { data: standings } = await supabase
-      .from("initial_standings")
-      .select("*");
+      const { data: standings } = await supabase
+        .from("initial_standings")
+        .select("*");
 
-    const { data: matches } = await supabase
-      .from("matches")
-      .select("*")
-      .order("match_datetime", { ascending: true });
+      const { data: matches } = await supabase
+        .from("matches")
+        .select("*")
+        .order("match_datetime", { ascending: true });
 
-    setEquiposTodos(teams || []);
+      setEquiposTodos(teams || []);
 
-    // construye tabla por grupos desde initial_standings + resultados
-    const porGrupo = { A: [], B: [] };
-    (teams || []).forEach((t) => {
-      const st = (standings || []).find((s) => s.team_id === t.id);
-      porGrupo[t.group_label].push({
-        equipo: t.name, pts: st?.points || 0, pj: st?.played || 0, pg: st?.wins || 0,
-        pe: st?.draws || 0, pp: st?.losses || 0, gf: st?.gf || 0, gc: st?.ga || 0,
-        dg: (st?.gf || 0) - (st?.ga || 0), team_id: t.id,
+      // construye tabla por grupos desde initial_standings + resultados
+      const porGrupo = { A: [], B: [] };
+      (teams || []).forEach((t) => {
+        const st = (standings || []).find((s) => s.team_id === t.id);
+        porGrupo[t.group_label].push({
+          equipo: t.name, pts: st?.points || 0, pj: st?.played || 0, pg: st?.wins || 0,
+          pe: st?.draws || 0, pp: st?.losses || 0, gf: st?.gf || 0, gc: st?.ga || 0,
+          dg: (st?.gf || 0) - (st?.ga || 0), team_id: t.id,
+        });
       });
-    });
-    (matches || []).forEach((m) => {
-      if (m.home_score == null || m.away_score == null) return;
-      const a = porGrupo[m.group_label]?.find((t) => t.team_id === m.home_team);
-      const b = porGrupo[m.group_label]?.find((t) => t.team_id === m.away_team);
-      if (!a || !b) return;
-      a.pj++; b.pj++;
-      a.gf += m.home_score; a.gc += m.away_score; a.dg = a.gf - a.gc;
-      b.gf += m.away_score; b.gc += m.home_score; b.dg = b.gf - b.gc;
-      if (m.home_score > m.away_score) { a.pg++; a.pts += 2; b.pp++; }
-      else if (m.home_score < m.away_score) { b.pg++; b.pts += 2; a.pp++; }
-      else { a.pe++; b.pe++; a.pts += 1; b.pts += 1; }
-    });
+      (matches || []).forEach((m) => {
+        if (m.home_score == null || m.away_score == null) return;
+        const a = porGrupo[m.group_label]?.find((t) => t.team_id === m.home_team);
+        const b = porGrupo[m.group_label]?.find((t) => t.team_id === m.away_team);
+        if (!a || !b) return;
+        a.pj++; b.pj++;
+        a.gf += m.home_score; a.gc += m.away_score; a.dg = a.gf - a.gc;
+        b.gf += m.away_score; b.gc += m.home_score; b.dg = b.gf - b.gc;
+        if (m.home_score > m.away_score) { a.pg++; a.pts += 2; b.pp++; }
+        else if (m.home_score < m.away_score) { b.pg++; b.pts += 2; a.pp++; }
+        else { a.pe++; b.pe++; a.pts += 1; b.pts += 1; }
+      });
 
-    setGrupoA(porGrupo.A || []);
-    setGrupoB(porGrupo.B || []);
-    setPartidos(matches || []);
+      setGrupoA(porGrupo.A || []);
+      setGrupoB(porGrupo.B || []);
+      setPartidos(matches || []);
+    } finally {
+      setIsLoadingPublic(false);
+    }
   };
 
   // Helpers públicos usados fuera de Programación
@@ -232,49 +241,71 @@ function App() {
             ))}
           </nav>
 
-          {/* Contenido por pestaña */}
-          {activeTab === "tablas" && (
-            <Tablas
-              grupoA={grupoA}
-              grupoB={grupoB}
-              ordenarTabla={(tabla) =>
-                [...tabla].sort((a, b) => {
-                  if (b.pts !== a.pts) return b.pts - a.pts;
-                  if (b.dg !== a.dg) return b.dg - a.dg;
-                  if (b.pg !== a.pg) return b.pg - a.pg;
-                  return b.gf - a.gf;
-                })
-              }
-              logoFromName={logoFromName}
-              setEquipoDetalleId={setEquipoDetalleId}
-              setEquipoDetalleNombre={setEquipoDetalleNombre}
-              prevScrollRef={prevScrollRef}
-              layout={layout}
-              leftWrapRef={leftWrapRef}
-              rightWrapRef={rightWrapRef}
-              commonHeight={commonHeight}
-            />
-          )}
-
-          {activeTab === "grupos" && (
-            <Grupos equipos={equiposTodos} />
-          )}
-
-          {activeTab === "estadisticas" && (
-            <Estadisticas
-              grupoA={grupoA}
-              grupoB={grupoB}
-              statsView={statsView}
-              setStatsView={setStatsView}
-              logoFromName={logoFromName}
-            />
-          )}
-
-          {activeTab === "programacion" && (
-            <Programacion
-              partidos={partidos}
+          {/* Contenido por pestaña (SOLO se envuelve con el detalle) */}
+          {equipoDetalleId ? (
+            <DetalleEquipo
+              equipoId={equipoDetalleId}
+              equipoNombre={equipoDetalleNombre}
               equipos={equiposTodos}
+              partidos={partidos}
+              onClose={() => {
+                try {
+                  if (typeof prevScrollRef.current === "number") {
+                    window.scrollTo({ top: prevScrollRef.current });
+                  }
+                } catch {}
+                setEquipoDetalleId(null);
+                setEquipoDetalleNombre("");
+              }}
             />
+          ) : (
+            <>
+              {activeTab === "tablas" && (
+                <Tablas
+                  grupoA={grupoA}
+                  grupoB={grupoB}
+                  ordenarTabla={(tabla) =>
+                    [...tabla].sort((a, b) => {
+                      if (b.pts !== a.pts) return b.pts - a.pts;
+                      if (b.dg !== a.dg) return b.dg - a.dg;
+                      if (b.pg !== a.pg) return b.pg - a.pg;
+                      return b.gf - a.gf;
+                    })
+                  }
+                  logoFromName={logoFromName}
+                  setEquipoDetalleId={setEquipoDetalleId}
+                  setEquipoDetalleNombre={setEquipoDetalleNombre}
+                  prevScrollRef={prevScrollRef}
+                  layout={layout}
+                  leftWrapRef={leftWrapRef}
+                  rightWrapRef={rightWrapRef}
+                  commonHeight={commonHeight}
+                />
+              )}
+
+              {activeTab === "grupos" && (
+                <Grupos equipos={equiposTodos} />
+              )}
+
+              {activeTab === "estadisticas" && (
+                <Estadisticas
+                  grupoA={grupoA}
+                  grupoB={grupoB}
+                  statsView={statsView}
+                  setStatsView={setStatsView}
+                  logoFromName={logoFromName}
+                />
+              )}
+
+              {activeTab === "programacion" && (
+                <Programacion
+                  partidos={partidos}
+                  equipos={equiposTodos}
+                  isLoading={isLoadingPublic}
+                  isAdmin={isAdmin}
+                />
+              )}
+            </>
           )}
         </>
       )}
