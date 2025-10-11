@@ -1,0 +1,64 @@
+/* ===============================
+   COPA EVG — estilos específicos
+   =============================== */
+
+/* ===== POSICIONES (dentro de #copa-scope) ===== */
+#copa-scope #copa-posiciones.tables-grid--copa,
+#copa-scope #copa-posiciones .tables-grid--copa{
+  justify-content: center;
+  justify-items: center;
+  align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+}
+@media (max-width: 720px){
+  #copa-scope #copa-posiciones.tables-grid--copa,
+  #copa-scope #copa-posiciones .tables-grid--copa{
+    grid-template-columns: 1fr;
+  }
+}
+#copa-scope #copa-posiciones .panel--tabla-grupo{
+  max-width: 640px; width: 100%; margin-inline: auto; overflow-x: hidden;
+}
+#copa-scope #copa-posiciones table.compacta th,
+#copa-scope #copa-posiciones table.compacta td{ text-align: center; vertical-align: middle; }
+#copa-scope #copa-posiciones td:nth-child(2){ text-align: center; vertical-align: middle; }
+#copa-scope #copa-posiciones td:nth-child(2) .escudo{ display: block; margin-inline: auto; }
+#copa-scope #copa-posiciones td.td-equipo{ text-align: center; }
+#copa-scope #copa-posiciones td.td-equipo .team-name{
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden; margin-inline: auto; text-wrap: balance;
+}
+#copa-scope #copa-posiciones .td-equipo,
+#copa-scope #copa-posiciones .td-equipo .team-name{
+  text-overflow: clip !important; overflow: visible !important; text-transform: none !important;
+}
+
+/* ===== PROGRAMACIÓN (dentro de #copa-scope) ===== */
+#copa-scope #copa-programacion .panel{
+  max-width: 640px; width: 100%; margin-inline: auto;
+}
+#copa-scope #copa-programacion .days-grid{
+  display: grid !important;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)) !important;
+  gap: 12px !important; align-items: start !important; width: 100%;
+}
+#copa-scope #copa-programacion ul{
+  display: grid !important; gap: 12px !important; justify-items: stretch !important;
+}
+#copa-scope #copa-programacion li{ width: 100% !important; }
+#copa-scope #copa-programacion .match-card{
+  width: 100% !important; max-width: 100% !important;
+  justify-self: stretch !important; align-self: stretch !important;
+}
+@media (max-width: 980px){
+  #copa-scope #copa-programacion .days-grid{ grid-template-columns: 1fr !important; }
+}
+
+/* Logos grandes en programación COPA (según lo pediste) */
+#copa-scope #copa-programacion .logo-img{ width: 96px; height: 96px; }
+
+/* Ajustes de nombres en tarjetas (por si hay nombres largos) */
+#copa-scope #copa-programacion .team-name{
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden; text-wrap: balance;
+}

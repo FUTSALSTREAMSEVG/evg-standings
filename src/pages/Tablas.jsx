@@ -7,26 +7,46 @@ export default function Tablas({
   layout, leftWrapRef, rightWrapRef, commonHeight
 }) {
   const HIDE_NAME_BREAKPOINT = 720;
+  const STACK_BREAKPOINT = 720; // ← apilar a una columna en pantallas angostas
 
   const getHidden = () =>
     typeof window !== "undefined"
       ? window.matchMedia(`(max-width:${HIDE_NAME_BREAKPOINT}px)`).matches
       : false;
 
-  const [hideNameCol, setHideNameCol] = useState(false);
+  const getNarrow = () =>
+    typeof window !== "undefined"
+      ? window.matchMedia(`(max-width:${STACK_BREAKPOINT}px)`).matches
+      : false;
 
-  useLayoutEffect(() => setHideNameCol(getHidden()), []);
+  const [hideNameCol, setHideNameCol] = useState(false);
+  const [isNarrow, setIsNarrow] = useState(false);
+
+  useLayoutEffect(() => {
+    setHideNameCol(getHidden());
+    setIsNarrow(getNarrow()); // ← inicializamos “angosto”
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const mq = window.matchMedia(`(max-width:${HIDE_NAME_BREAKPOINT}px)`);
-    const onChange = () => setHideNameCol(mq.matches);
-    mq.addEventListener?.("change", onChange);
+
+    const mqHide = window.matchMedia(`(max-width:${HIDE_NAME_BREAKPOINT}px)`);
+    const mqStack = window.matchMedia(`(max-width:${STACK_BREAKPOINT}px)`);
+
+    const onChange = () => {
+      setHideNameCol(mqHide.matches);
+      setIsNarrow(mqStack.matches); // ← actualizar en tiempo real
+    };
+
+    mqHide.addEventListener?.("change", onChange);
+    mqStack.addEventListener?.("change", onChange);
     window.addEventListener("orientationchange", onChange);
     window.addEventListener("resize", onChange);
     onChange();
+
     return () => {
-      mq.removeEventListener?.("change", onChange);
+      mqHide.removeEventListener?.("change", onChange);
+      mqStack.removeEventListener?.("change", onChange);
       window.removeEventListener("orientationchange", onChange);
       window.removeEventListener("resize", onChange);
     };
@@ -168,11 +188,11 @@ export default function Tablas({
     </div>
   );
 
+  // 👇 Si la pantalla es angosta, apilamos (1 columna), sin importar layout.stacked
+  const gridCols = (layout?.stacked || isNarrow) ? "1fr" : "1fr 1fr";
+
   return (
-    <div
-      className="tables-grid"
-      style={{ gridTemplateColumns: layout.stacked ? "1fr" : "1fr 1fr" }}
-    >
+    <div className="tables-grid" style={{ gridTemplateColumns: gridCols }}>
       <TablaGrupo titulo="Grupo A" data={grupoA} />
       <TablaGrupo titulo="Grupo B" data={grupoB} />
     </div>
