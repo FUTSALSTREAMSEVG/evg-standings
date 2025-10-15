@@ -2,15 +2,17 @@ import React, { useMemo } from "react";
 import PropTypes from "prop-types";
 
 export default function Estadisticas({
-  grupoA, grupoB, statsView, setStatsView, logoFromName
+  grupoA, grupoB, statsView, setStatsView, logoFromName, statsRows // opcional
 }) {
   const all = useMemo(() => {
+    if (Array.isArray(statsRows) && statsRows.length) {
+      return [...statsRows];
+    }
     const map = new Map();
     [...grupoA, ...grupoB].forEach((t) => map.set(t.team_id, { ...t }));
     return Array.from(map.values());
-  }, [grupoA, grupoB]);
+  }, [grupoA, grupoB, statsRows]);
 
-  // WebP-first SOLO locales
   const toWebpFirst = (url) =>
     url && url.startsWith("/") ? url.replace(/\.png(\?.*)?$/i, ".webp$1") : url;
 
@@ -27,7 +29,6 @@ export default function Estadisticas({
     }
   };
 
-  // ======= Top 5 (valla / goles / mas_goleados) =======
   let rows = [];
   if (statsView === "valla") {
     rows = [...all].sort((a, b) => {
@@ -55,8 +56,7 @@ export default function Estadisticas({
   const lastColLabel = statsView === "goles" ? "GF" : "GC";
   const lastColColor = statsView === "goles" ? "#ffd7b5" : "#dfeaff";
 
-  // ===== Reclasificación (A+B) =====
-  const BREAKPOINT = 720; // mismo corte que Posiciones para ocultar nombre
+  const BREAKPOINT = 720;
   const getMatches = (q) =>
     typeof window !== "undefined" ? window.matchMedia(q).matches : false;
 
@@ -89,7 +89,7 @@ export default function Estadisticas({
     return b.gf - a.gf;
   });
 
-  const reclas = useMemo(() => reclasOrden([...grupoA, ...grupoB]), [grupoA, grupoB]);
+  const reclas = React.useMemo(() => reclasOrden(all), [all]);
   const mid = Math.ceil(reclas.length / 2);
   const leftReclas = reclas.slice(0, mid);
   const rightReclas = reclas.slice(mid);
@@ -113,8 +113,8 @@ export default function Estadisticas({
   );
 
   const renderPosRow = (t, indexBase) => {
-    const baseUrl = logoFromName(t.equipo);   // remoto o local
-    const primary = toWebpFirst(baseUrl);     // solo cambia si es local
+    const baseUrl = logoFromName(t.equipo);
+    const primary = toWebpFirst(baseUrl);
     return (
       <tr key={t.team_id}>
         <td>{indexBase + 1}</td>
@@ -126,7 +126,7 @@ export default function Estadisticas({
             onError={(e) => onShieldError(e, baseUrl)}
           />
         </td>
-        {!hideNameCol && <td className="td-equipo">{t.equipo}</td>}
+        {!hideNameCol && <td className="td-equipo" style={{ textAlign: "center" }}>{t.equipo}</td>}
         <td>{t.pts}</td>
         <td>{t.pj}</td>
         <td>{t.pg}</td>
@@ -141,7 +141,6 @@ export default function Estadisticas({
 
   return (
     <section style={{ padding: "12px 8px" }}>
-      {/* Selector de vista */}
       <div style={{ display: "flex", gap: 10, justifyContent: "center", alignItems: "center", marginBottom: 12 }}>
         <label>Ver:</label>
         <select value={statsView} onChange={(e) => setStatsView(e.target.value)}>
@@ -152,7 +151,6 @@ export default function Estadisticas({
         </select>
       </div>
 
-      {/* TOP 5 (no reclas) */}
       {statsView !== "reclas" && (
         <div className="panel center-max-900">
           <table className="compacta compacta--stats">
@@ -185,7 +183,7 @@ export default function Estadisticas({
                         onError={(e) => onShieldError(e, baseUrl)}
                       />
                     </td>
-                    <td className="td-equipo">{t.equipo}</td>
+                    <td className="td-equipo" style={{ textAlign: "center" }}>{t.equipo}</td>
                     <td style={{ color: lastColColor }}>
                       {statsView === "goles" ? t.gf : t.gc}
                     </td>
@@ -197,22 +195,20 @@ export default function Estadisticas({
         </div>
       )}
 
-      {/* ===== RECLASIFICACIÓN (A + B) ===== */}
       {statsView === "reclas" && (
         <div className="center-max-1200" style={{ marginTop: 16 }}>
           <h2 style={{ textAlign: "center", margin: "8px 0 10px 0" }}>RECLASIFICACIÓN</h2>
 
           <div
             className="tables-grid"
-            style={{ gridTemplateColumns: oneColumn ? "1fr" : "1fr 1fr" }}
+            style={{ gridTemplateColumns: window.matchMedia && window.matchMedia("(max-width:720px)").matches ? "1fr" : "1fr 1fr" }}
           >
-            {/* Panel IZQUIERDO: sin título y padding reducido para subir la tabla */}
             <div className="panel" style={{ padding: 4 }}>
               <table className="compacta compacta--pos" style={{ width: "100%", borderCollapse: "collapse", marginTop: 0 }}>
                 <colgroup>
                   <col style={{ width: 40 }} />
                   <col style={{ width: 36 }} />
-                  {!hideNameCol && <col />}
+                  <col />
                   <col style={{ width: 36 }} />
                   <col style={{ width: 36 }} />
                   <col style={{ width: 36 }} />
@@ -229,13 +225,12 @@ export default function Estadisticas({
               </table>
             </div>
 
-            {/* Panel DERECHO: sin título y padding reducido para subir la tabla */}
             <div className="panel" style={{ padding: 4 }}>
               <table className="compacta compacta--pos" style={{ width: "100%", borderCollapse: "collapse", marginTop: 0 }}>
                 <colgroup>
                   <col style={{ width: 40 }} />
                   <col style={{ width: 36 }} />
-                  {!hideNameCol && <col />}
+                  <col />
                   <col style={{ width: 36 }} />
                   <col style={{ width: 36 }} />
                   <col style={{ width: 36 }} />
@@ -264,4 +259,5 @@ Estadisticas.propTypes = {
   statsView: PropTypes.oneOf(["valla", "goles", "mas_goleados", "reclas"]).isRequired,
   setStatsView: PropTypes.func.isRequired,
   logoFromName: PropTypes.func.isRequired,
+  statsRows: PropTypes.array,
 };

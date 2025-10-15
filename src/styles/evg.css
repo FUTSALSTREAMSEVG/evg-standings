@@ -1,10 +1,7 @@
 /* =========================================
    TORNEO EVG — estilos específicos (aislados)
-   Todo va bajo #evg-scope para no pisar COPA
    ========================================= */
 
-/* ===== Grilla EVG (DESKTOP como estaba) =====
-   No forzamos 1 columna aquí; dejamos el comportamiento clásico. */
 #evg-scope .tables-grid{
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -14,26 +11,24 @@
   gap: 10px;
 }
 
-/* ===== Panel genérico EVG ===== */
 #evg-scope .panel{
   margin-inline: auto;
-  overflow-x: hidden; /* evita desbordes horizontales */
+  overflow-x: hidden;
 }
 
-/* ===== POSICIONES EVG (base desktop intacto) ===== */
 #evg-scope table.compacta.compacta--pos{
   width: 100%;
-  table-layout: fixed;        /* asegura que respete el ancho del panel */
+  table-layout: fixed;
   border-collapse: collapse;
 }
 #evg-scope td.td-equipo{
-  text-align: left;
+  text-align: center; /* <- centrado para reclas y stats */
   white-space: normal;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
 #evg-scope td.td-equipo .team-name{
-  display: block;             /* sin clamp en desktop */
+  display: block;
   overflow: visible;
   text-wrap: pretty;
 }
@@ -42,7 +37,6 @@
   margin-inline: auto;
 }
 
-/* ===== ESTADÍSTICAS EVG (igual que antes) ===== */
 #evg-scope table.compacta.compacta--stats{
   width: min(100%, 500px);
   margin-inline: auto;
@@ -54,7 +48,6 @@
   display: block; margin-inline: auto;
 }
 
-/* ===== Programación EVG (usa base.css; aquí solo centramos) ===== */
 #evg-scope .cards-grid{
   grid-template-columns: minmax(300px, 760px);
   justify-content: center;
@@ -64,50 +57,54 @@
   max-width: 100%;
   justify-self: center;
   align-self: center;
+
+  /* Fondo opaco como pediste */
+  background: linear-gradient(180deg, #0b0b0b 0%, #141414 100%);
+  border: 1px solid rgba(241,127,38,0.65);
+  box-shadow: 0 10px 24px rgba(0,0,0,0.50), inset 0 0 0 1px rgba(255,255,255,0.06);
 }
 #evg-scope .logos-row .logo-img{ width: 88px; height: 88px; object-fit: contain; }
 
-/* ===== Grupos EVG (desktop como estaba) ===== */
 #evg-scope .tables-grid.groups{
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   justify-content: center;
 }
 
-/* =========================================
-   SOLO VERTICAL (móvil) — Ajustes para que no se corte
-   NO afecta al desktop
-   ========================================= */
+/* Selector Semana/Fase centrado */
+#evg-scope .week-picker-public{
+  display: flex;
+  justify-content: center;
+  margin: 4px auto 6px auto;
+}
+#evg-scope .week-select-public{
+  margin-left: 6px;
+}
+#evg-scope .section-title{
+  text-align: center;
+}
 
-/* 1) En pantallas angostas, las tarjetas en una sola columna */
+/* ===== Responsive ===== */
+
 @media (max-width: 720px){
   #evg-scope .tables-grid{ grid-template-columns: 1fr; }
   #evg-scope .panel{ max-width: 100%; }
 }
 
-/* 2) En pantallas angostas, permitir encoger celdas y compactar tipografía */
 @media (max-width: 520px){
-  /* Permitir que celdas encojan (sin min-width implícito) */
   #evg-scope table.compacta.compacta--pos th,
   #evg-scope table.compacta.compacta--pos td{
-    min-width: 0;           /* 🔑 clave para que quepa todo */
-    box-sizing: border-box; /* padding cuenta dentro del ancho */
+    min-width: 0;
+    box-sizing: border-box;
   }
-
-  /* Reducir padding/typografía */
   #evg-scope table.compacta.compacta--pos thead th{
     padding: 6px 4px; font-size: 11px;
   }
   #evg-scope table.compacta.compacta--pos tbody td{
     padding: 4px 4px; font-size: 11.5px;
   }
-
-  /* Escudo más pequeño en móvil */
   #evg-scope table.compacta.compacta--pos td:nth-child(2) .escudo{
     width: 20px; height: 20px;
   }
-
-  /* Anchos compactos por columna (ajusta si tu orden difiere):
-     1: POS | 2: ESC | 3: EQUIPO | 4..n: PTS, PJ, PG, PE, PP, GF, GC, DG */
   #evg-scope table.compacta.compacta--pos th:nth-child(1),
   #evg-scope table.compacta.compacta--pos td:nth-child(1){
     width: 26px; text-align: center;
@@ -116,18 +113,14 @@
   #evg-scope table.compacta.compacta--pos td:nth-child(2){
     width: 28px; text-align: center;
   }
-  /* EQUIPO se queda flexible */
   #evg-scope table.compacta.compacta--pos th:nth-child(3),
   #evg-scope table.compacta.compacta--pos td:nth-child(3){
     width: auto;
   }
-  /* Numéricas compactas y centradas */
   #evg-scope table.compacta.compacta--pos th:nth-child(n+4),
   #evg-scope table.compacta.compacta--pos td:nth-child(n+4){
     width: 28px; text-align: center;
   }
-
-  /* Nombre equipo a 2 líneas máx para no romper */
   #evg-scope td.td-equipo .team-name{
     display: -webkit-box;
     -webkit-box-orient: vertical;
@@ -139,10 +132,20 @@
   }
 }
 
-/* 3) Móviles muy estrechos: aún más compacto */
 @media (max-width: 380px){
   #evg-scope table.compacta.compacta--pos thead th{ font-size: 10px; }
   #evg-scope table.compacta.compacta--pos tbody td{ font-size: 10.5px; }
   #evg-scope table.compacta.compacta--pos th:nth-child(n+4),
   #evg-scope table.compacta.compacta--pos td:nth-child(n+4){ width: 26px; }
 }
+
+#evg-scope .week-picker-public{ display:flex; justify-content:center; margin:4px auto 6px auto; }
+#evg-scope .week-select-public{ margin-left:6px; }
+#evg-scope .section-title{ text-align:center; }
+
+#evg-scope .match-card{
+  background: linear-gradient(180deg, #0b0b0b 0%, #141414 100%);
+  border: 1px solid rgba(241,127,38,0.65);
+  box-shadow: 0 10px 24px rgba(0,0,0,0.50), inset 0 0 0 1px rgba(255,255,255,0.06);
+}
+#evg-scope .big-score{ white-space: nowrap; }

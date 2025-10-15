@@ -1,331 +1,377 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 
-export default function Programacion({ partidos, equipos, isLoading = false, isAdmin = false }) {
-  // ===== Helpers =====
-  const slugify = (s) =>
-    (s || "")
-      .toString()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .toLowerCase()
-      .replace(/[^a-z0-9\s-]/g, "")
-      .trim()
-      .replace(/\s+/g, "-");
+const slugify = (s) =>
+  (s || "")
+    .toString()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-");
 
+// --- Helpers ISO week (lunes-domingo)
+function isoWeekInfo(dIn) {
+  // basado en ISO-8601: semana 1 es la que contiene el jueves de ese año
+  const d = new Date(Date.UTC(dIn.getFullYear(), dIn.getMonth(), dIn.getDate()));
+  // día de la semana (1..7) con lunes=1
+  const dayNum = (d.getUTCDay() + 6) % 7 + 1;
+  // mover a jueves de esa semana
+  d.setUTCDate(d.getUTCDate() + (4 - dayNum));
+  // primer día del año ISO (jueves de la semana 1)
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+  const isoYear = d.getUTCFullYear();
+  return { isoYear, weekNo, key: `${isoYear}-W${String(weekNo).padStart(2, "0")}` };
+}
+
+export default function Programacion({ partidos, equipos, isLoading = false, isAdmin = false }) {
+  // ===== helpers =====
   const teamById = (id) => (equipos || []).find((t) => t.id === id) || null;
   const nombreEquipo = (id) => teamById(id)?.name || "??";
-
-  // Devuelve URL de logo: si hay logo_url (remoto) úsalo; si no, local .webp con fallback a .png
-  const getLogoUrls = (id) => {
+  const escudo = (id) => {
     const t = teamById(id);
-    if (t?.logo_url) {
-      return { primary: t.logo_url, fallback: "/logos/_default.png", isRemote: true };
+    const n = t?.name || "";
+    return t?.logo_url || `/logos/${slugify(n)}.webp`;
+  };
+  const onLogoError = (e, id) => {
+    const el = e.currentTarget;
+    const n = nombreEquipo(id);
+    if (/\.webp(\?.*)?$/i.test(el.src)) el.src = `/logos/${slugify(n)}.png`;
+    else {
+      el.style.visibility = "hidden";
+      el.style.width = "0px";
+      el.style.height = "0px";
     }
-    const base = `/logos/${slugify(nombreEquipo(id))}`;
-    return { primary: `${base}.webp`, fallback: `${base}.png`, isRemote: false };
   };
-
-  const ymdLocal = (dt) => {
-    const d = new Date(dt);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-      d.getDate()
-    ).padStart(2, "0")}`;
-  };
-
-  const agruparPorDia = (matchesArray) => {
-    const groups = {};
-    (matchesArray || []).forEach((m) => {
-      if (!m?.match_datetime) return;
-      const key = ymdLocal(m.match_datetime);
-      groups[key] = groups[key] || [];
-      groups[key].push(m);
-    });
-    return Object.entries(groups).sort(([a], [b]) => a.localeCompare(b));
-  };
-
-  const formatearHora = (dt) => {
-    if (!dt) return "";
-    const f = new Date(dt);
+  const horaStr = (iso) => {
+    if (!iso) return "";
+    const f = new Date(iso);
     let h = f.getHours();
     const m = String(f.getMinutes()).padStart(2, "0");
     const ampm = h >= 12 ? "pm" : "am";
     h = h % 12 || 12;
     return `${h}:${m} ${ampm}`;
   };
-
-  const formatearCabeceraDia = (dt) => {
-    if (!dt) return "";
-    const f = new Date(dt);
+  const ymd = (iso) => {
+    const d = new Date(iso);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  const tituloDia = (iso) => {
+    const f = new Date(iso);
     const dias = ["DOMINGO","LUNES","MARTES","MIÉRCOLES","JUEVES","VIERNES","SÁBADO"];
     const meses = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
-    return `${dias[f.getDay()]} ${f.getDate()} de ${meses[f.getMonth()]}`;
+    return `${dias[f.getDay()]} ${f.getDate()} de ${meses[f.getMonth()]}`.toUpperCase();
   };
 
-  // ===== Estado Programación =====
-  const semanasDisponibles = useMemo(
-    () =>
-      Array.from(
-        new Set((partidos || []).map((p) => p.week_number).filter((x) => typeof x === "number"))
-      ).sort((a, b) => a - b),
+  // ===== ordenar por fecha/hora =====
+  const partidosOrd = useMemo(
+    () => (partidos || []).slice().sort((a, b) => new Date(a.match_datetime) - new Date(b.match_datetime)),
     [partidos]
   );
 
-  const [semanaSeleccionada, setSemanaSeleccionada] = useState(
-    semanasDisponibles[semanasDisponibles.length - 1] ?? null
-  );
+  // ===== semanas (fase de grupos) =====
+  const semanas = useMemo(() => {
+    const s = new Set(
+      partidosOrd
+        .filter((p) => p.phase_type !== "elim" && typeof p.week_number === "number")
+        .map((p) => p.week_number)
+    );
+    return Array.from(s).sort((a, b) => a - b);
+  }, [partidosOrd]);
 
-  const lista = useMemo(() => {
-    let l = [...(partidos || [])];
-    if (typeof semanaSeleccionada === "number") {
-      l = l.filter((p) => p.week_number === semanaSeleccionada);
+  // ===== FE por semana ISO: construimos índices 1..N para selector =====
+  const feSemanaMap = useMemo(() => {
+    const keys = [];
+    const byKey = new Map(); // key ISO -> array matches
+    for (const p of partidosOrd) {
+      if (p.phase_type === "elim" && p.match_datetime) {
+        const { key } = isoWeekInfo(new Date(p.match_datetime));
+        if (!byKey.has(key)) {
+          byKey.set(key, []);
+          keys.push(key);
+        }
+        byKey.get(key).push(p);
+      }
     }
-    return l;
-  }, [partidos, semanaSeleccionada]);
+    keys.sort((a, b) => a.localeCompare(b)); // cronológico
+    // armamos índice: 0..N-1 -> key
+    const indexToKey = keys;
+    const keyToIndex = new Map(keys.map((k, i) => [k, i]));
+    return { indexToKey, keyToIndex, byKey };
+  }, [partidosOrd]);
 
-  const gruposDia = useMemo(() => agruparPorDia(lista), [lista]);
-  const etiquetaSemana = () =>
-    typeof semanaSeleccionada === "number" ? `Semana ${semanaSeleccionada}` : "-";
+  const feSemanas = useMemo(() => feSemanaMap.indexToKey.map((_, i) => i + 1), [feSemanaMap]);
 
-  // ===== Micro-estados =====
-  const showCargando = !!isLoading;
-  const showSinEquipos = !isLoading && (equipos?.length ?? 0) === 0;
-  const showSinSemanas = !isLoading && (semanasDisponibles.length === 0);
-  const showSinPartidosSemana = !isLoading && !showSinSemanas && (gruposDia.length === 0);
+  // ===== selección por defecto: última FE por semana si existe; sino última semana grupos =====
+  const defaultSelector = useMemo(() => {
+    if (feSemanas.length > 0) return `FEW:${feSemanas[feSemanas.length - 1]}`; // Fase Eliminatoria por Semana
+    const w = semanas[semanas.length - 1];
+    return typeof w === "number" ? `S:${w}` : "";
+  }, [feSemanas, semanas]);
 
-  // ===== UI =====
+  // 👉 Solo seteamos por defecto UNA VEZ (no se resetea)
+  const [selector, setSelector] = useState("");
+  const didInit = useRef(false);
+  useEffect(() => {
+    if (!didInit.current) {
+      setSelector(defaultSelector);
+      didInit.current = true;
+    }
+  }, [defaultSelector]);
+
+  // Si la selección deja de existir, fallback
+  useEffect(() => {
+    if (!selector) return;
+    if (selector.startsWith("FEW:")) {
+      const n = parseInt(selector.slice(4), 10);
+      if (Number.isNaN(n) || n < 1 || n > feSemanas.length) setSelector(defaultSelector);
+    } else if (selector.startsWith("S:")) {
+      const w = parseInt(selector.slice(2), 10);
+      if (!semanas.includes(w)) setSelector(defaultSelector);
+    }
+  }, [selector, feSemanas.length, semanas.join("|"), defaultSelector]);
+
+  // ===== detectar orientación para adaptar columnas =====
+  const [isPortrait, setIsPortrait] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(orientation: portrait)");
+    const onChange = () => setIsPortrait(mq.matches);
+    onChange();
+    mq.addEventListener?.("change", onChange);
+    return () => mq.removeEventListener?.("change", onChange);
+  }, []);
+
+  // ===== filtrado según selector =====
+  const listaFiltrada = useMemo(() => {
+    if (!selector) return [];
+    if (selector.startsWith("S:")) {
+      const sem = parseInt(selector.slice(2), 10);
+      return partidosOrd.filter((p) => p.phase_type !== "elim" && p.week_number === sem);
+    }
+    if (selector.startsWith("FEW:")) {
+      const n = parseInt(selector.slice(4), 10) - 1; // índice 0-based
+      const key = feSemanaMap.indexToKey[n];
+      if (!key) return [];
+      return (feSemanaMap.byKey.get(key) || []).slice().sort((a, b) => new Date(a.match_datetime) - new Date(b.match_datetime));
+    }
+    return [];
+  }, [selector, partidosOrd, feSemanaMap]);
+
+  // ===== agrupar en columnas por DÍA  =====
+  const gruposPorDia = useMemo(() => {
+    const g = new Map();
+    for (const p of listaFiltrada) {
+      if (!p.match_datetime) continue;
+      const key = ymd(p.match_datetime);
+      if (!g.has(key)) g.set(key, []);
+      g.get(key).push(p);
+    }
+    return Array.from(g.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([diaKey, arr]) => [diaKey, arr.slice().sort((a, b) => new Date(a.match_datetime) - new Date(b.match_datetime))]);
+  }, [listaFiltrada]);
+
+  // ===== estilos =====
+  const gridColsStyle = {
+    display: "grid",
+    gridTemplateColumns: isPortrait
+      ? "repeat(auto-fit, minmax(220px, 1fr))"
+      : "repeat(auto-fit, minmax(260px, 1fr))",
+    gap: 12,
+    alignItems: "start",
+    justifyItems: "stretch",
+    width: "100%",
+    margin: "0 auto",
+    padding: "0 8px",
+    overflowX: "hidden",
+  };
+
+  const listGridFull = { listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 10 };
+
+  const nombreStyle = {
+    fontSize: "clamp(11px, 1.9vw, 14px)",
+    fontWeight: 700,
+    lineHeight: 1.15,
+    textAlign: "center",
+    maxWidth: "18ch",
+    margin: "0 auto",
+    overflowWrap: "anywhere",
+  };
+
+  const scoreBox = {
+    minWidth: 68,
+    padding: "4px 10px",
+    border: "1px solid rgba(255,255,255,0.28)",
+    borderRadius: 10,
+    fontWeight: 800,
+    fontSize: "clamp(14px, 3.5vw, 18px)",
+    letterSpacing: 0.3,
+    textAlign: "center",
+    background: "rgba(255,255,255,0.06)",
+    whiteSpace: "nowrap",
+  };
+
+  const logoBase = {
+    width: "clamp(60px, 11vw, 112px)",
+    height: "auto",
+    objectFit: "contain",
+    justifySelf: "center",
+  };
+  const logoMonoDiaPortrait = {
+    width: "clamp(70px, 14vw, 124px)",
+    height: "auto",
+    objectFit: "contain",
+    justifySelf: "center",
+  };
+
+  const ORANGE = "#F17F26";
+  const chipBase = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    borderRadius: 999,
+    padding: "3px 12px",
+    fontSize: 13,
+    fontWeight: 800,
+    letterSpacing: 0.2,
+    whiteSpace: "nowrap",
+  };
+  const chipHora = {
+    ...chipBase,
+    background: "linear-gradient(180deg, #0b0b0b 0%, #111 100%)",
+    color: "#ffffff",
+    border: `1px solid ${ORANGE}`,
+    boxShadow: `0 0 0 1px ${ORANGE}40, 0 0 12px ${ORANGE}26, inset 0 0 0 1px rgba(255,255,255,0.06)`,
+    textShadow: "0 0 6px rgba(0,0,0,0.45)",
+    fontVariantNumeric: "tabular-nums",
+  };
+  const chipMeta = {
+    ...chipBase,
+    background: "#ffffff",
+    color: "#000000",
+    border: `1px solid ${ORANGE}`,
+  };
+  const metaLabel = { color: ORANGE, fontWeight: 900 };
+
+  const filaGrid = {
+    display: "grid",
+    gridTemplateColumns: "minmax(0,1fr) auto minmax(0,1fr)",
+    alignItems: "center",
+    justifyItems: "center",
+    gap: 8,
+  };
+
   return (
-    <section className="tables-grid section-programacion">
-      {/* Picker de semana */}
-      <div className="week-picker-public" style={{ justifyContent: "center" }}>
-        <span className="week-label">Ver:</span>
-        <select
-          className="week-select-public"
-          value={typeof semanaSeleccionada === "number" ? semanaSeleccionada : ""}
-          onChange={(e) => setSemanaSeleccionada(parseInt(e.target.value, 10))}
-        >
-          {semanasDisponibles.map((w) => (
-            <option key={w} value={w}>
-              Semana {w}
-            </option>
-          ))}
-        </select>
-      </div>
+    <section className="section-programacion" style={{ padding: "12px 8px" }}>
+      <div className="center-max-1200" style={{ maxWidth: "100%", overflow: "hidden" }}>
+        {/* SELECTOR CENTRADO (arriba del título) */}
+        <div style={{ display: "flex", justifyContent: "center", gap: 8, alignItems: "center", margin: "4px auto 6px auto", flexWrap: "wrap" }}>
+          <span>Ver:</span>
+          <select value={selector} onChange={(e) => setSelector(e.target.value)}>
+            {semanas.length > 0 && (
+              <optgroup label="Semanas">
+                {semanas.map((w) => (
+                  <option key={`S${w}`} value={`S:${w}`}>{`Semana ${w}`}</option>
+                ))}
+              </optgroup>
+            )}
+            {feSemanas.length > 0 && (
+              <optgroup label="Fase Eliminatoria (por semana)">
+                {feSemanas.map((n) => (
+                  <option key={`FEW${n}`} value={`FEW:${n}`}>{`F.E. Semana ${n}`}</option>
+                ))}
+              </optgroup>
+            )}
+          </select>
+        </div>
 
-      {/* Título */}
-      <div className="center-max-900" style={{ textAlign: "center" }}>
-        <h3 className="section-title" style={{ color: "#ffffff" }}>
-          PARTIDOS — {etiquetaSemana().toUpperCase()}
+        {/* TÍTULO */}
+        <h3 className="section-title" style={{ textAlign: "center", color: "#fff", margin: "0 0 8px" }}>
+          {selector.startsWith("S:")
+            ? `PARTIDOS — SEMANA ${selector.slice(2)}`
+            : selector.startsWith("FEW:")
+            ? `PARTIDOS — FASE ELIMINATORIA · SEMANA ${selector.slice(4)}`
+            : "PARTIDOS"}
         </h3>
-      </div>
 
-      {/* Paneles de micro-estado */}
-      {showCargando && (
-        <div className="panel" style={{ gridColumn: "1 / -1", textAlign: "center" }}>
-          <p style={{ color: "#bbb" }}>Cargando datos…</p>
-        </div>
-      )}
+        {/* ESTADOS */}
+        {isLoading && <p style={{ color: "#bbb", textAlign: "center" }}>Cargando…</p>}
+        {!isLoading && listaFiltrada.length === 0 && (
+          <p style={{ color: "#bbb", textAlign: "center" }}>No hay partidos para esta selección.</p>
+        )}
 
-      {showSinEquipos && (
-        <div className="panel" style={{ gridColumn: "1 / -1", textAlign: "center" }}>
-          <p style={{ color: "#bbb" }}>Sin equipos.</p>
-          {isAdmin && (
-            <div style={{ marginTop: 8 }}>
-              <a href="/admin">
-                <button>Ir al Panel Admin para cargar equipos</button>
-              </a>
-            </div>
-          )}
-        </div>
-      )}
+        {/* COLUMNAS POR DÍA */}
+        {!isLoading && listaFiltrada.length > 0 && (
+          <div style={gridColsStyle}>
+            {gruposPorDia.map(([diaKey, arr]) => {
+              const monoDiaPortrait = isPortrait && arr.length === 1;
+              const logoStyle = monoDiaPortrait ? logoMonoDiaPortrait : logoBase;
 
-      {showSinSemanas && !showSinEquipos && !showCargando && (
-        <div className="panel" style={{ gridColumn: "1 / -1", textAlign: "center" }}>
-          <p style={{ color: "#bbb" }}>No hay partidos cargados.</p>
-          {isAdmin && (
-            <div style={{ marginTop: 8 }}>
-              <a href="/admin">
-                <button>Crear partidos en Admin</button>
-              </a>
-            </div>
-          )}
-        </div>
-      )}
+              return (
+                <section key={diaKey} className="panel" style={{ padding: 8, width: "100%", maxWidth: 420, margin: "0 auto" }}>
+                  <h4 style={{ color: "#fff", opacity: 0.95, textAlign: "center", margin: "6px 0 10px", fontSize: "clamp(14px, 2.2vw, 16px)", lineHeight: 1.2 }}>
+                    {tituloDia(arr[0].match_datetime)}
+                  </h4>
 
-      {/* DÍAS */}
-      <div
-        className="days-grid"
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-          gap: 12,
-          alignItems: "start",
-          width: "100%",
-          margin: 0,
-          padding: "0 8px",
-        }}
-      >
-        {showSinPartidosSemana ? (
-          <div className="panel" style={{ gridColumn: "1 / -1", textAlign: "center" }}>
-            <p style={{ color: "#bbb" }}>No hay partidos esta semana.</p>
+                  <ul style={listGridFull}>
+                    {arr.map((p) => {
+                      const haveScore = p.home_score != null && p.away_score != null;
+                      const isElim = p.phase_type === "elim";
+
+                      return (
+                        <li key={p.id} className="match-card hoverable" style={{ width: "100%", textAlign: "center", padding: 8 }}>
+                          {/* CHIPS: HORA + (FASE | GRUPO) */}
+                          <div style={{ display: "flex", justifyContent: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+                            <span style={chipHora}>
+                              <span style={{ color: ORANGE }} aria-hidden>⏱</span>
+                              <span>{horaStr(p.match_datetime)}</span>
+                            </span>
+
+                            <span style={chipMeta}>
+                              {isElim ? (
+                                <>
+                                  <span style={metaLabel}>FASE</span>&nbsp;{p.phase}
+                                </>
+                              ) : (
+                                <>
+                                  <span style={metaLabel}>GRUPO</span>&nbsp;{p.group_label}
+                                </>
+                              )}
+                            </span>
+                          </div>
+
+                          {/* Logos + marcador */}
+                          <div className="logos-row" style={filaGrid}>
+                            <img src={escudo(p.home_team)} alt={nombreEquipo(p.home_team)} style={logoStyle} onError={(e) => onLogoError(e, p.home_team)} />
+                            <div className="big-score" style={scoreBox}>{haveScore ? `${p.home_score} - ${p.away_score}` : "VS"}</div>
+                            <img src={escudo(p.away_team)} alt={nombreEquipo(p.away_team)} style={logoStyle} onError={(e) => onLogoError(e, p.away_team)} />
+                          </div>
+
+                          {/* Nombres */}
+                          <div className="names-row no-vs" style={{ ...filaGrid, alignItems: "start", marginTop: 6 }}>
+                            <span className="team-name" style={nombreStyle} title={nombreEquipo(p.home_team)}>{nombreEquipo(p.home_team)}</span>
+                            <span className="vs" style={{ fontSize: "clamp(10px, 2vw, 14px)", opacity: 0.8 }}>vs</span>
+                            <span className="team-name" style={nombreStyle} title={nombreEquipo(p.away_team)}>{nombreEquipo(p.away_team)}</span>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              );
+            })}
           </div>
-        ) : (
-          gruposDia.map(([diaKey, arr]) => (
-            <section key={diaKey} className="day-column panel" style={{ padding: 8 }}>
-              <h4
-                style={{
-                  color: "#ffffff",
-                  opacity: 0.95,
-                  textAlign: "center",
-                  margin: "6px 0 10px",
-                  fontSize: "clamp(14px, 2.2vw, 16px)",
-                  lineHeight: 1.2,
-                }}
-              >
-                {formatearCabeceraDia(arr[0].match_datetime).toUpperCase()}
-              </h4>
+        )}
 
-              <ul
-                className="cards-grid"
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr",
-                  gap: 10,
-                  margin: 0,
-                  padding: 0,
-                  listStyle: "none",
-                }}
-              >
-                {arr.map((p) => {
-                  const haveScore = p.home_score != null && p.away_score != null;
-
-                  // URLs (remotas si hay logo_url, locales si no)
-                  const homeLogo = getLogoUrls(p.home_team);
-                  const awayLogo = getLogoUrls(p.away_team);
-
-                  return (
-                    <li key={p.id} className="match-card hoverable" style={{ padding: 8 }}>
-                      {/* Badges */}
-                      <div
-                        className="match-badges"
-                        style={{
-                          display: "flex",
-                          flexWrap: "wrap",
-                          gap: 6,
-                          justifyContent: "center",
-                          fontSize: "clamp(10px, 2.5vw, 12px)",
-                        }}
-                      >
-                        <span className={`badge badge-group ${haveScore ? "played" : "pending"}`}>
-                          GRUPO {p.group_label}
-                        </span>
-                        <span className="badge badge-time">{formatearHora(p.match_datetime)}</span>
-                      </div>
-
-                      {/* Logos + marcador */}
-                      <div className="logos-row" style={{ gap: 8 }}>
-                        <img
-                          loading="lazy" decoding="async" fetchpriority="low"
-                          src={homeLogo.primary}
-                          alt={`Logo ${nombreEquipo(p.home_team)}`}
-                          className="logo-img"
-                          style={{ width: "clamp(48px, 9vw, 88px)", height: "auto" }}
-                          onError={(e) => {
-                            const el = e.currentTarget;
-                            // Si era local .webp, cae a .png; si era remoto, cae al default
-                            if (!homeLogo.isRemote && /\.webp(\?.*)?$/i.test(el.src)) {
-                              el.src = homeLogo.fallback;
-                            } else {
-                              el.src = "/logos/_default.png";
-                            }
-                          }}
-                        />
-                        <div
-                          className="big-score"
-                          style={{
-                            fontSize: "clamp(18px, 4.5vw, 24px)",
-                            minWidth: 48,
-                            textAlign: "center",
-                          }}
-                        >
-                          {haveScore ? `${p.home_score} - ${p.away_score}` : "VS"}
-                        </div>
-                        <img
-                          loading="lazy" decoding="async" fetchpriority="low"
-                          src={awayLogo.primary}
-                          alt={`Logo ${nombreEquipo(p.away_team)}`}
-                          className="logo-img"
-                          style={{ width: "clamp(48px, 9vw, 88px)", height: "auto" }}
-                          onError={(e) => {
-                            const el = e.currentTarget;
-                            if (!awayLogo.isRemote && /\.webp(\?.*)?$/i.test(el.src)) {
-                              el.src = awayLogo.fallback;
-                            } else {
-                              el.src = "/logos/_default.png";
-                            }
-                          }}
-                        />
-                      </div>
-
-                      {/* Nombres */}
-                      <div
-                        className="names-row no-vs"
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "minmax(0,1fr) auto minmax(0,1fr)",
-                          gap: 6,
-                          alignItems: "center",
-                          textAlign: "center",
-                          fontSize: "clamp(11px, 1.9vw, 14px)",
-                          lineHeight: 1.1,
-                        }}
-                      >
-                        <span
-                          className="team-name"
-                          style={{
-                            display: "-webkit-box",
-                            WebkitLineClamp: 2,
-                            WebkitBoxOrient: "vertical",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            wordBreak: "break-word",
-                            whiteSpace: "normal",
-                            minWidth: 0,
-                            padding: "0 2px",
-                          }}
-                          title={nombreEquipo(p.home_team)}
-                        >
-                          {nombreEquipo(p.home_team)}
-                        </span>
-
-                        <span className="vs" style={{ fontSize: "clamp(10px, 2vw, 14px)", opacity: 0.8 }}>
-                          vs
-                        </span>
-
-                        <span
-                          className="team-name"
-                          style={{
-                            display: "-webkit-box",
-                            WebkitLineClamp: 2,
-                            WebkitBoxOrient: "vertical",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            wordBreak: "break-word",
-                            whiteSpace: "normal",
-                            minWidth: 0,
-                            padding: "0 2px",
-                          }}
-                          title={nombreEquipo(p.away_team)}
-                        >
-                          {nombreEquipo(p.away_team)}
-                        </span>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
-          ))
+        {/* ayuda admin si no hay equipos */}
+        {!isLoading && (equipos?.length ?? 0) === 0 && isAdmin && (
+          <div style={{ textAlign: "center", marginTop: 12 }}>
+            <a href="/admin">
+              <button>Cargar equipos en Panel Admin</button>
+            </a>
+          </div>
         )}
       </div>
     </section>

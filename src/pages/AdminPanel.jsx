@@ -1,1256 +1,808 @@
-import React, { useEffect, useMemo, useState } from "react";
-import PropTypes from "prop-types";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabaseClient";
 
-/* ==================== UTILIDADES ==================== */
-function slugify(str = "") {
-  return String(str)
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)+/g, "");
+const LOGO_BUCKET = "team-logos";
+
+// --- Helpers ISO week (lunes-domingo)
+function isoWeekInfo(dIn) {
+  const d = new Date(Date.UTC(dIn.getFullYear(), dIn.getMonth(), dIn.getDate()));
+  const dayNum = (d.getUTCDay() + 6) % 7 + 1; // lunes=1..domingo=7
+  d.setUTCDate(d.getUTCDate() + (4 - dayNum)); // mover a jueves de esa semana
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+  const isoYear = d.getUTCFullYear();
+  return { isoYear, weekNo, key: `${isoYear}-W${String(weekNo).padStart(2, "0")}` };
 }
 
-/* ==================== COMPONENTE ==================== */
-export default function AdminPage({ onExit }) {
-  const [session, setSession] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(true);   // RLS OFF => no bloqueamos UI
-  const [checkingAdmin, setCheckingAdmin] = useState(false); // no usamos spinner
+// Convierte "YYYY-MM-DDTHH:mm" local a ISO con offset
+function localToISOWithOffset(local) {
+  if (!local) return null;
+  const [YMD, HM] = local.split("T");
+  if (!HM) return null;
+  const [y, m, d] = YMD.split("-").map(Number);
+  const [hh, mm] = HM.split(":").map(Number);
+  const n = new Date(y, (m || 1) - 1, d || 1, hh || 0, mm || 0, 0);
+  const off = n.getTimezoneOffset();
+  const sign = off > 0 ? "-" : "+";
+  const abs = Math.abs(off);
+  const oh = String(Math.floor(abs / 60)).padStart(2, "0");
+  const om = String(abs % 60).padStart(2, "0");
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00${sign}${oh}:${om}`;
+}
 
-  // 🔹 NUEVO: micro-estado de carga
+function formatearHora(dt) {
+  if (!dt) return "";
+  const f = new Date(dt);
+  let h = f.getHours();
+  const m = String(f.getMinutes()).padStart(2, "0");
+  const ampm = h >= 12 ? "pm" : "am";
+  h = h % 12 || 12;
+  return `${h}:${m} ${ampm}`;
+}
+
+export default function AdminPanel({ onExit }) {
   const [loading, setLoading] = useState(false);
 
-  // Tabs
-  const [activeTab, setActiveTab] = useState("partidos");
+  // pestañas intactas
+  const [activeTab, setActiveTab] = useState("crear"); // crear | equipos | backup
 
-  // Datos base
   const [equipos, setEquipos] = useState([]);
   const [partidos, setPartidos] = useState([]);
+  const [posiciones, setPosiciones] = useState([]);
 
-  // Crear partido
+  // crear partido
+  const [tipoPartido, setTipoPartido] = useState("group"); // "group" | "elim"
   const [grupo, setGrupo] = useState("A");
+  const [semana, setSemana] = useState(1);
+  const [faseSel, setFaseSel] = useState("");   // fase existente seleccionada
+  const [faseName, setFaseName] = useState(""); // input (nuevo nombre o renombre)
+
   const [equipo1, setEquipo1] = useState("");
   const [equipo2, setEquipo2] = useState("");
   const [fecha, setFecha] = useState("");
   const [hora, setHora] = useState("");
-  const [semana, setSemana] = useState(1);
 
-  // Editar partido
+  // edición partido (inline)
   const [editando, setEditando] = useState(null);
   const [editDraft, setEditDraft] = useState(null);
 
-  // Filtro semana
-  const [semanaAdminSeleccionada, setSemanaAdminSeleccionada] = useState(null);
+  // ====== Selector único (igual a Programación) ======
+  // valores: "S:NN" (semana grupos) | "FEW:NN" (semana ISO eliminatoria)
+  const [selector, setSelector] = useState("");
+  const didInitFilters = useRef(false);
 
-  // Gestión de Equipos
-  const [subiendoLogoId, setSubiendoLogoId] = useState(null);
-  const [logoFiles, setLogoFiles] = useState({});
-  const [localEdits, setLocalEdits] = useState({});
-  const [nuevoNombre, setNuevoNombre] = useState("");
-  const [nuevoGrupo, setNuevoGrupo] = useState("A");
-
-  // Backups
-  const [backups, setBackups] = useState([]); // [{name, ts, pretty}]
-
-  /* =========== ENTRAR RÁPIDO (RLS OFF, sin bloquear UI) =========== */
-  const entrarRapido = () => {
-    setCheckingAdmin(false);
-    setIsAdmin(true);
-    setTimeout(() => { verificarAdmin(); }, 0); // verifica en segundo plano
-  };
-  /* ==================== AUTH + INIT ==================== */
   useEffect(() => {
-    let unsubAuth = null;
-
-    (async () => {
-      const { data } = await supabase.auth.getSession();
-      setSession(data?.session || null);
-      if (data?.session) entrarRapido();
-
-      const { data: sub } = supabase.auth.onAuthStateChange(async (_event, s) => {
-        setSession(s || null);
-        if (s) entrarRapido();
-        else { setIsAdmin(false); setCheckingAdmin(false); }
-      });
-      unsubAuth = sub?.subscription;
-    })();
-
     recargarTodo();
-    recargarBackups();
-
-    const channel = supabase
+    const ch = supabase
       .channel("realtime-evg-admin")
-      .on("postgres_changes", { event: "*", schema: "public", table: "matches" }, recargarTodo)
       .on("postgres_changes", { event: "*", schema: "public", table: "teams" }, recargarTodo)
+      .on("postgres_changes", { event: "*", schema: "public", table: "matches" }, recargarTodo)
       .on("postgres_changes", { event: "*", schema: "public", table: "initial_standings" }, recargarTodo)
       .subscribe();
-
-    return () => {
-      try { unsubAuth?.unsubscribe?.(); } catch {}
-      try { supabase.removeChannel(channel); } catch {}
-      try { supabase.removeAllChannels?.(); } catch {}
-    };
+    return () => { try { supabase.removeChannel(ch); } catch {} };
   }, []);
 
-  /* ==================== CERRAR SESIÓN ==================== */
-  const cerrarSesion = async () => {
-    try { await supabase.auth.signOut(); }
-    catch (e) { console.warn("signOut error:", e?.message || e); }
-    finally {
-      try { supabase.removeAllChannels?.(); } catch {}
-      setSession(null);
-      setIsAdmin(false);
-      window.location.reload(); // estado limpio sí o sí
-    }
-  };
-
-  /* ========== (Opcional) Verificación real en 2º plano ========== */
-  const verificarAdmin = async () => {
-    try {
-      const { data: ures } = await supabase.auth.getUser();
-      if (!ures?.user?.id) { setIsAdmin(false); return false; }
-      // Si tienes la RPC fn_is_admin activa, úsala:
-      const { data, error } = await supabase.rpc("fn_is_admin");
-      if (error) { console.warn("fn_is_admin error:", error?.message || error); return true; } // no bloquear
-      setIsAdmin(!!data);
-      return !!data;
-    } catch (e) {
-      console.warn("verificarAdmin exception:", e?.message || e);
-      return true; // no bloquees UI con RLS OFF
-    }
-  };
-
-  /* ==================== DATA ==================== */
-  const recargarTodo = async () => {
-    // 🔹 NUEVO: activar loading
+  async function recargarTodo() {
     setLoading(true);
     try {
-      const { data: teams } = await supabase
-        .from("teams")
-        .select("id,name,group_label,logo_url")
-        .order("name");
+      const { data: t } = await supabase.from("teams").select("id,name,group_label,logo_url").order("name");
+      const { data: m } = await supabase.from("matches").select("*").order("match_datetime", { ascending: true });
+      const { data: s } = await supabase.from("initial_standings").select("*");
 
-      const { data: matches } = await supabase
-        .from("matches")
-        .select("*")
-        .order("match_datetime", { ascending: true });
+      setEquipos(t || []);
+      setPartidos(m || []);
+      setPosiciones(s || []);
 
-      setEquipos(teams || []);
-      setPartidos(matches || []);
-
-      const weeks = Array.from(new Set((matches || [])
-        .map((m) => m.week_number)
-        .filter(Boolean)))
-        .sort((a,b)=>a-b);
-
-      setSemanaAdminSeleccionada((prev) =>
-        typeof prev === "number" ? prev : (weeks[weeks.length - 1] ?? null)
-      );
-
-      setLogoFiles({});
-      setLocalEdits({});
-      setSubiendoLogoId(null);
+      // SOLO en el primer load fijamos un default, luego no tocamos la elección del usuario
+      if (!didInitFilters.current) {
+        const { feSemanas } = computeFEWeeks(m || []);
+        const semanasGrupos = Array.from(new Set((m || []).map(x => x.week_number).filter(n => typeof n === "number"))).sort((a,b)=>a-b);
+        const lastFE = feSemanas[feSemanas.length - 1];
+        const lastW = semanasGrupos[semanasGrupos.length - 1];
+        if (lastFE) setSelector(`FEW:${lastFE}`);
+        else if (typeof lastW === "number") setSelector(`S:${lastW}`);
+        didInitFilters.current = true;
+      } else {
+        // mantener selector actual; si desaparece la opción, elegimos un fallback coherente
+        const { feSemanas } = computeFEWeeks(m || []);
+        if (selector.startsWith("FEW:")) {
+          const n = parseInt(selector.slice(4), 10);
+          if (!feSemanas.includes(n)) {
+            const lastFE = feSemanas[feSemanas.length - 1];
+            if (lastFE) setSelector(`FEW:${lastFE}`);
+          }
+        } else if (selector.startsWith("S:")) {
+          const w = parseInt(selector.slice(2), 10);
+          const semanasGrupos = Array.from(new Set((m || []).map(x => x.week_number).filter(n => typeof n === "number")));
+          if (!semanasGrupos.includes(w)) {
+            const lastW = semanasGrupos.sort((a,b)=>a-b).pop();
+            if (typeof lastW === "number") setSelector(`S:${lastW}`);
+          }
+        }
+      }
     } finally {
-      // 🔹 NUEVO: desactivar loading
       setLoading(false);
     }
-  };
-  // Fechas utilidades
-  const toLocalDate = (dt) => {
-    if (!dt) return "";
-    const d = new Date(dt);
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-  };
-  const toLocalTime = (dt) => {
-    if (!dt) return "";
-    const d = new Date(dt);
-    return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
-  };
-  const localToISOWithOffset = (localStr) => {
-    if (!localStr) return null;
-    const [datePart, timePart] = localStr.split("T");
-    if (!timePart) return null;
-    const [y, m, d] = datePart.split("-").map(Number);
-    const [hh, mm] = timePart.split(":").map(Number);
-    const localDate = new Date(y, (m || 1)-1, d || 1, hh || 0, mm || 0, 0, 0);
-    const tz = localDate.getTimezoneOffset();
-    const sign = tz > 0 ? "-" : "+";
-    const abs = Math.abs(tz);
-    const oh = String(Math.floor(abs / 60)).padStart(2, "0");
-    const om = String(abs % 60).padStart(2, "0");
-    return `${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}T${String(hh).padStart(2,"0")}:${String(mm).padStart(2,"0")}:00${sign}${oh}:${om}`;
-  };
+  }
 
-  // Rivales disponibles
-  const equiposDelGrupo = useMemo(
-    () => equipos.filter((t) => t.group_label === grupo),
-    [equipos, grupo]
+  // ====== datos derivados ======
+  const partidosOrd = useMemo(
+    () => (partidos || []).slice().sort((a, b) => new Date(a.match_datetime) - new Date(b.match_datetime)),
+    [partidos]
   );
-  const idEquipo1 = useMemo(
-    () => equiposDelGrupo.find((t) => t.name === equipo1)?.id ?? null,
-    [equiposDelGrupo, equipo1]
+
+  const semanasGrupos = useMemo(
+    () => Array.from(new Set(partidosOrd.filter(p => p.phase_type !== "elim" && typeof p.week_number === "number").map(p => p.week_number))).sort((a,b)=>a-b),
+    [partidosOrd]
   );
-  const yaJugaron = (idA, idB) => {
-    if (!idA || !idB) return false;
-    return (partidos || []).some((m) =>
-      m && m.home_team && m.away_team &&
-      ((m.home_team === idA && m.away_team === idB) || (m.home_team === idB && m.away_team === idA)) &&
-      m.home_score != null && m.away_score != null
-    );
-  };
-  const rivalesDisponibles = useMemo(() => {
-    if (!idEquipo1) {
-      return equiposDelGrupo
-        .filter((t) => t.name !== equipo1)
-        .map((t) => t.name);
+
+  function computeFEWeeks(list) {
+    const keys = [];
+    const byKey = new Map(); // key ISO -> array matches
+    for (const p of list) {
+      if (p.phase_type === "elim" && p.match_datetime) {
+        const { key } = isoWeekInfo(new Date(p.match_datetime));
+        if (!byKey.has(key)) {
+          byKey.set(key, []);
+          keys.push(key);
+        }
+        byKey.get(key).push(p);
+      }
     }
-    return equiposDelGrupo
-      .filter((r) => r.id !== idEquipo1 && !yaJugaron(idEquipo1, r.id))
-      .map((r) => r.name);
-  }, [equiposDelGrupo, idEquipo1, equipo1, partidos]);
-  /* ==================== PARTIDOS ==================== */
-  const guardarPartido = async () => {
+    keys.sort((a, b) => a.localeCompare(b));
+    const indexToKey = keys;
+    const feSemanas = keys.map((_, i) => i + 1);
+    const keyByIndex = (n) => indexToKey[n - 1] || null;
+    return { feSemanas, keyByIndex, byKey };
+  }
+
+  const feMeta = useMemo(() => computeFEWeeks(partidosOrd), [partidosOrd]);
+
+  const equiposScope = useMemo(() => {
+    if (tipoPartido === "elim") return equipos;
+    return equipos.filter((t) => (t.group_label || "").toUpperCase() === grupo);
+  }, [equipos, grupo, tipoPartido]);
+
+  const idEquipo1 = useMemo(() => equiposScope.find((t) => t.name === equipo1)?.id ?? null, [equiposScope, equipo1]);
+  const yaJugaron = (a, b) =>
+    (partidos || []).some((m) => (m.home_team === a && m.away_team === b) || (m.home_team === b && m.away_team === a));
+  const rivalesDisponibles = useMemo(() => {
+    if (!idEquipo1) return equiposScope.filter((t) => t.name !== equipo1).map((t) => t.name);
+    return equiposScope.filter((r) => r.id !== idEquipo1 && !yaJugaron(idEquipo1, r.id)).map((r) => r.name);
+  }, [equiposScope, idEquipo1, equipo1, partidos]);
+
+  async function guardarPartido() {
     if (!equipo1 || !equipo2 || equipo1 === equipo2 || !fecha || !hora) return;
-    const grupoTeams = equipos.filter((t) => t.group_label === grupo);
-    const t1 = grupoTeams.find((t) => t.name === equipo1);
-    const t2 = grupoTeams.find((t) => t.name === equipo2);
+
+    const t1 = equipos.find((t) => t.name === equipo1);
+    const t2 = equipos.find((t) => t.name === equipo2);
     if (!t1 || !t2) return;
 
-    if ( yaJugaron(t1.id, t2.id) ) {
-      alert("Estos equipos ya jugaron entre sí. Elige otro rival.");
+    if (yaJugaron(t1.id, t2.id)) {
+      alert("Estos equipos ya jugaron entre sí.");
       return;
     }
 
     const iso = localToISOWithOffset(`${fecha}T${hora}`);
-    try {
-      const { error } = await supabase.from("matches").insert([{
-        group_label: grupo,
-        home_team: t1.id,
-        away_team: t2.id,
-        home_score: null,
-        away_score: null,
-        played: false,
-        match_datetime: iso,
-        week_number: semana,
-      }]);
-      if (error) throw error;
-      setEquipo1(""); setEquipo2(""); setFecha(""); setHora(""); setSemana(1);
-      await recargarTodo();
-    } catch (e) {
-      alert("Error al crear partido: " + (e?.message || e));
+
+    let phaseType = "group";
+    let phase = null;
+    let payloadExtra = {};
+    if (tipoPartido === "elim") {
+      phaseType = "elim";
+      const f = (faseSel || "").trim() || (faseName || "").trim();
+      if (!f) {
+        alert("Ponle un nombre a la fase (ej: Cuartos de final).");
+        return;
+      }
+      phase = f;
+      payloadExtra = { group_label: null, week_number: null };
+    } else {
+      payloadExtra = { group_label: grupo, week_number: Number(semana) || null };
     }
-  };
 
-  const empezarEdicion = (p) => {
-    setEditando(p.id);
-    setEditDraft({
-      ...p,
-      edit_date: toLocalDate(p.match_datetime),
-      edit_time: toLocalTime(p.match_datetime),
-    });
-  };
-  const cancelarEdicion = () => { setEditando(null); setEditDraft(null); };
+    const payload = {
+      home_team: t1.id,
+      away_team: t2.id,
+      home_score: null,
+      away_score: null,
+      played: false,
+      match_datetime: iso,
+      phase_type: phaseType,
+      phase,
+      ...payloadExtra,
+    };
 
-  const actualizarEdicion = async () => {
-    if (!editDraft) return;
-    const hasDate = !!editDraft.edit_date;
-    const hasTime = !!editDraft.edit_time;
-    const localCombined = hasDate && hasTime ? `${editDraft.edit_date}T${editDraft.edit_time}` : null;
-    const iso = localCombined ? localToISOWithOffset(localCombined) : null;
+    const { error } = await supabase.from("matches").insert([payload]);
+    if (error) {
+      alert("Error al crear partido: " + error.message);
+      return;
+    }
+
+    // limpiar form mínimos (no tocamos selector)
+    setEquipo1(""); setEquipo2(""); setFecha(""); setHora("");
+    if (tipoPartido === "elim" && faseName.trim()) setFaseName(faseName.trim());
+
+    await recargarTodo(); // mantiene el selector vigente
+  }
+
+  // ====== renombrar fase inline (selector + input) ======
+  async function renombrarFaseInline() {
+    const src = (faseSel || "").trim();
+    const dst = (faseName || "").trim();
+    if (!src) { alert("Selecciona primero una fase existente en el selector."); return; }
+    if (!dst) { alert("Escribe el nuevo nombre en el campo de fase."); return; }
+    if (src === dst) { alert("El nuevo nombre es igual al actual."); return; }
+    setLoading(true);
     try {
       const { error } = await supabase
         .from("matches")
-        .update({
-          home_score: editDraft.home_score === "" || editDraft.home_score == null ? null : Number(editDraft.home_score),
-          away_score: editDraft.away_score === "" || editDraft.away_score == null ? null : Number(editDraft.away_score),
-          played: editDraft.home_score !== null && editDraft.home_score !== "" && editDraft.away_score !== null && editDraft.away_score !== "",
-          match_datetime: iso,
-          week_number: Number(editDraft.week_number) || null,
-        })
-        .eq("id", editDraft.id);
-      if (error) throw error;
-      cancelarEdicion();
+        .update({ phase: dst })
+        .eq("phase_type", "elim")
+        .eq("phase", src);
+      if (error) { alert("No se pudo renombrar: " + error.message); return; }
+      setFaseSel(dst);
       await recargarTodo();
-    } catch (e) {
-      alert("Error al actualizar partido: " + (e?.message || e));
-    }
-  };
-  const eliminarPartido = async (id) => {
-    if (!window.confirm("¿Eliminar partido?")) return;
-    try {
-      const { error } = await supabase.from("matches").delete().eq("id", Number(id));
-      if (error) throw error;
-      await recargarTodo();
-    } catch (e) {
-      alert("No se pudo eliminar el partido: " + (e?.message || e));
-    }
-  };
-
-  const semanasDisponibles = useMemo(
-    () => Array.from(new Set((partidos || []).map((m) => m.week_number).filter(Boolean))).sort((a,b)=>a-b),
-    [partidos]
-  );
-
-  const partidosFiltrados = useMemo(() => {
-    let base = [...partidos];
-    if (typeof semanaAdminSeleccionada === "number") {
-      base = base.filter((p) => p.week_number === semanaAdminSeleccionada);
-    }
-    return base;
-  }, [partidos, semanaAdminSeleccionada]);
-
-  /* ==================== EQUIPOS ==================== */
-  const handleEditLocal = (teamId, field, value) => {
-    setLocalEdits((prev) => ({
-      ...prev,
-      [teamId]: { ...(prev[teamId] || {}), [field]: value },
-    }));
-  };
-
-  async function subirLogo(teamId, file) {
-    if (!file) return null;
-    setSubiendoLogoId(teamId);
-    try {
-      const ext = (file.name.split(".").pop() || "webp").toLowerCase();
-      const path = `team-${teamId}-${Date.now()}.${ext}`;
-
-      const up = await supabase.storage.from("team-logos").upload(path, file, { upsert: false });
-      if (up?.error) {
-        alert("Error subiendo al Storage: " + up.error.message);
-        console.error("Storage upload error:", up.error);
-        return null;
-      }
-
-      const { data: pub } = supabase.storage.from("team-logos").getPublicUrl(path);
-      const publicUrl = pub?.publicUrl;
-      if (!publicUrl) {
-        alert("No se obtuvo URL público del logo (getPublicUrl)");
-        return null;
-      }
-
-      const upd = await supabase.from("teams").update({ logo_url: publicUrl }).eq("id", teamId);
-      if (upd?.error) {
-        alert("Error actualizando teams.logo_url: " + upd.error.message);
-        console.error("Teams update error:", upd.error);
-        return null;
-      }
-      return publicUrl;
-    } catch (e) {
-      alert("Excepción durante la subida: " + (e?.message || e));
-      console.error(e);
-      return null;
+      alert(`Fase renombrada de "${src}" a "${dst}".`);
     } finally {
-      setSubiendoLogoId(null);
+      setLoading(false);
     }
   }
 
-  async function guardarEquipo(team) {
-    const draft = localEdits[team.id] || {};
-    const payload = {
-      name: draft.name != null ? draft.name : team.name,
-      group_label: draft.group_label != null ? draft.group_label : team.group_label,
-    };
-
-    const file = logoFiles[team.id];
-    if (file) {
-      const publicUrl = await subirLogo(team.id, file);
-      if (publicUrl) payload.logo_url = publicUrl;
-      else delete payload.logo_url;
-    }
-
-    const { error } = await supabase.from("teams").update(payload).eq("id", team.id);
-    if (error) {
-      alert("No se pudo guardar el equipo: " + error.message);
-      return;
-    }
-
-    setLocalEdits((p) => { const c = { ...p }; delete c[team.id]; return c; });
-    setLogoFiles((p) => { const c = { ...p }; delete c[team.id]; return c; });
-
-    await recargarTodo();
-  }
-
-  async function crearEquipo() {
-    if (!nuevoNombre.trim()) { alert("Escribe un nombre de equipo."); return; }
-    const { error } = await supabase.from("teams")
-      .insert([{ name: nuevoNombre.trim(), group_label: nuevoGrupo }]);
-    if (error) {
-      alert("No se pudo crear el equipo: " + error.message);
-      return;
-    }
-    setNuevoNombre("");
-    setNuevoGrupo("A");
-    await recargarTodo();
-  }
-
-  async function eliminarEquipo(teamId) {
-    if (!window.confirm("¿Eliminar equipo y sus partidos/asientos de tabla?")) return;
-    try {
-      const del1 = await supabase.from("matches").delete().or(`home_team.eq.${teamId},away_team.eq.${teamId}`);
-      if (del1.error) throw del1.error;
-
-      const del2 = await supabase.from("initial_standings").delete().eq("team_id", teamId);
-      if (del2.error) throw del2.error;
-
-      const del3 = await supabase.from("teams").delete().eq("id", teamId);
-      if (del3.error) throw del3.error;
-
-      await recargarTodo();
-    } catch (e) {
-      alert("No se pudo eliminar el equipo: " + (e?.message || e));
-    }
-  }
-  /* ===================== BACKUP (máx 2) & RESET ===================== */
-
-  // Timestamp para nombres
-  const tsId = () => {
-    const d = new Date();
-    const pad = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  // ==== estilos comunes (coinciden con Programación) ====
+  const ORANGE = "#F17F26";
+  const solidCard = {
+    background: "linear-gradient(180deg, #0b0b0b 0%, #141414 100%)",
+    border: "1px solid rgba(241,127,38,0.65)",
+    boxShadow: "0 10px 24px rgba(0,0,0,0.50), inset 0 0 0 1px rgba(255,255,255,0.06)",
   };
-  // Lista backups
-  const recargarBackups = async () => {
-    const { data: files, error } = await supabase.storage.from("team-logos")
-      .list("_backups", { sortBy: { column: "name", order: "desc" }});
-    if (error) { setBackups([]); return; }
+  const chipBase = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    borderRadius: 999,
+    padding: "3px 12px",
+    fontSize: 13,
+    fontWeight: 800,
+    letterSpacing: 0.2,
+    whiteSpace: "nowrap",
+  };
+  const chipHora = {
+    ...chipBase,
+    background: "linear-gradient(180deg, #0b0b0b 0%, #111 100%)",
+    color: "#ffffff",
+    border: `1px solid ${ORANGE}`,
+    boxShadow: `0 0 0 1px ${ORANGE}40, 0 0 12px ${ORANGE}26, inset 0 0 0 1px rgba(255,255,255,0.06)`,
+    textShadow: "0 0 6px rgba(0,0,0,0.45)",
+    fontVariantNumeric: "tabular-nums",
+  };
+  const chipMeta = {
+    ...chipBase,
+    background: "#ffffff",
+    color: "#000000",
+    border: `1px solid ${ORANGE}`,
+  };
+  const metaLabel = { color: ORANGE, fontWeight: 900 };
 
-    const parseTs = (ts) => {
-      const y = ts.slice(0,4), mo = ts.slice(4,6), d = ts.slice(6,8);
-      const hh = ts.slice(9,11), mm = ts.slice(11,13), ss = ts.slice(13,15);
-      return `${y}-${mo}-${d} ${hh}:${mm}:${ss}`;
-    };
+  // ====== util UI (igual a Programación) ======
+  const [isPortrait, setIsPortrait] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(orientation: portrait)");
+    const onChange = () => setIsPortrait(mq.matches);
+    onChange();
+    mq.addEventListener?.("change", onChange);
+    return () => mq.removeEventListener?.("change", onChange);
+  }, []);
 
-    const list = (files || [])
-      .filter(f => /^league-\d{8}-\d{6}\.json$/.test(f.name))
-      .map(f => {
-        const m = f.name.match(/^league-(\d{8}-\d{6})\.json$/);
-        const ts = m ? m[1] : null;
-        return { name: f.name, ts, pretty: ts ? parseTs(ts) : "—" };
-      })
-      .sort((a,b)=> (a.name < b.name ? 1 : -1))
-      .slice(0, 2);
+  const nombreEquipoById = (id) => equipos.find((t) => t.id === id)?.name || "??";
 
-    setBackups(list);
+  const gridColsStyle = {
+    display: "grid",
+    gridTemplateColumns: isPortrait
+      ? "repeat(auto-fit, minmax(220px, 1fr))"
+      : "repeat(auto-fit, minmax(260px, 1fr))",
+    gap: 12,
+    alignItems: "start",
+    justifyItems: "stretch",
+    width: "100%",
+    margin: "0 auto",
+    padding: "0 8px",
+    overflowX: "hidden",
   };
 
-  // Listar logos del bucket raíz
-  const listarLogos = async () => {
-    const bucket = supabase.storage.from("team-logos");
-    let page = 0;
-    const files = [];
-    while (true) {
-      const { data, error } = await bucket.list("", { limit: 100, offset: 100 * page });
-      if (error) break;
-      if (!data || data.length === 0) break;
-      files.push(...data.filter(f => !f.name.endsWith("/")).map(f => f.name));
-      if (data.length < 100) break;
-      page++;
+  const listGridFull = { listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 10 };
+
+  const logoBase = {
+    width: "clamp(42px, 8vw, 92px)",
+    height: "auto",
+    objectFit: "contain",
+    justifySelf: "center",
+  };
+
+  const scoreBox = {
+    minWidth: 68,
+    padding: "4px 10px",
+    border: "1px solid rgba(255,255,255,0.28)",
+    borderRadius: 10,
+    fontWeight: 800,
+    fontSize: "clamp(14px, 3.5vw, 18px)",
+    letterSpacing: 0.3,
+    textAlign: "center",
+    background: "rgba(255,255,255,0.06)",
+    whiteSpace: "nowrap",
+  };
+
+  const filaGrid = {
+    display: "grid",
+    gridTemplateColumns: "minmax(0,1fr) auto minmax(0,1fr)",
+    alignItems: "center",
+    justifyItems: "center",
+    gap: 8,
+  };
+
+  const nombreStyle = {
+    fontSize: "clamp(11px, 1.9vw, 14px)",
+    fontWeight: 700,
+    lineHeight: 1.15,
+    textAlign: "center",
+    maxWidth: "18ch",
+    margin: "0 auto",
+    overflowWrap: "anywhere",
+  };
+
+  // ====== filtrado según selector (igual a Programación) ======
+  const listaFiltrada = useMemo(() => {
+    if (!selector) return [];
+    if (selector.startsWith("S:")) {
+      const sem = parseInt(selector.slice(2), 10);
+      return partidosOrd.filter((p) => p.phase_type !== "elim" && p.week_number === sem);
     }
-    return files;
-  };
-
-  const copiarLogos = async (fromPrefix, toPrefix) => {
-    const bucket = supabase.storage.from("team-logos");
-    if (!fromPrefix) {
-      const files = await listarLogos();
-      for (const name of files) {
-        const fromPath = name;
-        const toPath = toPrefix ? `${toPrefix}/${name}` : name;
-        const { error } = await bucket.copy(fromPath, toPath);
-        if (error) { /* ignora faltantes */ }
-      }
-    } else {
-      let offset = 0;
-      while (true) {
-        const { data, error } = await bucket.list(fromPrefix, { limit: 100, offset });
-        if (error || !data || data.length === 0) break;
-        for (const f of data) {
-          if (f.name.endsWith("/")) continue;
-          const fromPath = `${fromPrefix}/${f.name}`;
-          const toPath = toPrefix ? `${toPrefix}/${f.name}` : f.name;
-          const { error: e2 } = await bucket.copy(fromPath, toPath);
-          if (e2) { /* ignora faltantes */ }
-        }
-        if (data.length < 100) break;
-        offset += 100;
-      }
+    if (selector.startsWith("FEW:")) {
+      const n = parseInt(selector.slice(4), 10);
+      const key = feMeta.keyByIndex(n);
+      if (!key) return [];
+      const arr = feMeta.byKey.get(key) || [];
+      return arr.slice().sort((a, b) => new Date(a.match_datetime) - new Date(b.match_datetime));
     }
+    return [];
+  }, [selector, partidosOrd, feMeta]);
+
+  // ===== agrupar por día para columnas =====
+  const ymd = (iso) => {
+    const d = new Date(iso);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  const tituloDia = (iso) => {
+    const f = new Date(iso);
+    const dias = ["DOMINGO","LUNES","MARTES","MIÉRCOLES","JUEVES","VIERNES","SÁBADO"];
+    const meses = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+    return `${dias[f.getDay()]} ${f.getDate()} de ${meses[f.getMonth()]}`.toUpperCase();
   };
 
-  const borrarTodosLosLogos = async () => {
-    const bucket = supabase.storage.from("team-logos");
-    const files = await listarLogos();
-    if (files.length) await bucket.remove(files.map(n => ({ name: n })));
-  };
-
-  const fetchTodo = async () => {
-    const { data: teams } = await supabase.from("teams").select("*");
-    const { data: standings } = await supabase.from("initial_standings").select("*");
-    const { data: matches } = await supabase.from("matches").select("*");
-    return { teams: teams || [], standings: standings || [], matches: matches || [] };
-  };
-
-  const subirBackupJSON = async (obj, ts) => {
-    try {
-      const blob = new Blob([JSON.stringify(obj)], { type: "application/json" });
-      const path = `_backups/league-${ts}.json`;
-
-      const { data, error } = await supabase.storage
-        .from("team-logos")
-        .upload(path, blob, { upsert: true, contentType: "application/json" });
-
-      if (error) {
-        if (/row-level security/i.test(error.message)) {
-          throw new Error("Storage RLS bloqueó la subida (revisa policies INSERT en 'team-logos').");
-        }
-        if (/bucket/i.test(error.message) && /not found/i.test(error.message)) {
-          throw new Error("El bucket 'team-logos' no existe (nombre exacto).");
-        }
-        throw error;
-      }
-      if (!data?.path) throw new Error("El Storage subió pero no devolvió 'path'.");
-      return data.path;
-    } catch (e) {
-      console.error("subirBackupJSON:", e);
-      throw e;
+  const gruposPorDia = useMemo(() => {
+    const g = new Map();
+    for (const p of listaFiltrada) {
+      if (!p.match_datetime) continue;
+      const key = ymd(p.match_datetime);
+      if (!g.has(key)) g.set(key, []);
+      g.get(key).push(p);
     }
-  };
+    return Array.from(g.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([diaKey, arr]) => [diaKey, arr.slice().sort((a, b) => new Date(a.match_datetime) - new Date(b.match_datetime))]);
+  }, [listaFiltrada]);
 
-  const crearBackup = async () => {
-    const ts = tsId();
-
-    // 1) estado actual
-    const data = await fetchTodo();
-
-    // 2) copiar logos actuales -> carpeta del backup
-    await copiarLogos("", `team-logos-backup/${ts}`);
-
-    // 3) subir JSON
-    await subirBackupJSON({ ts, ...data }, ts);
-
-    // 4) mantener máx 2 (JSON + carpeta logos)
-    const { data: files } = await supabase.storage.from("team-logos")
-      .list("_backups", { sortBy: { column: "name", order: "desc" }});
-    const jsons = (files || [])
-      .filter(f => f.name.startsWith("league-") && f.name.endsWith(".json"))
-      .map(f => f.name)
-      .sort((a,b)=> (a < b ? 1 : -1));
-    const sobra = jsons.slice(2);
-    for (const name of sobra) {
-      await supabase.storage.from("team-logos").remove([`_backups/${name}`]);
-      const m = name.match(/^league-(\d{8}-\d{6})\.json$/);
-      const folder = m ? `team-logos-backup/${m[1]}` : null;
-      if (folder) {
-        let page = 0;
-        while (true) {
-          const { data: sub } = await supabase.storage.from("team-logos").list(folder, { limit: 100, offset: 100 * page });
-          if (!sub || sub.length === 0) break;
-          await supabase.storage.from("team-logos").remove(sub.map(f => `${folder}/${f.name}`));
-          if (sub.length < 100) break;
-          page++;
-        }
-      }
-    }
-
-    await recargarBackups();
-    return { ts };
-  };
-
-  const crearBackupManual = async () => {
-    try {
-      const { ts } = await crearBackup();
-      alert(`Backup creado correctamente (${ts}).`);
-    } catch (e) {
-      alert("No se pudo crear el backup: " + (e?.message || e));
-    }
-  };
-
-  const resetearLigaConBackup = async () => {
-    const ok = window.confirm(
-      "Esto hará un BACKUP y luego borrará TODOS los equipos, posiciones iniciales, partidos y logos. ¿Continuar?"
-    );
-    if (!ok) return;
-
-    const email = session?.user?.email || "";
-    const pass = window.prompt(`Por seguridad, ingresa la CLAVE de ${email} para confirmar:`);
-    if (!pass) { alert("Operación cancelada."); return; }
-
-    try {
-      const { error: authErr } = await supabase.auth.signInWithPassword({ email, password: pass });
-      if (authErr) { alert("Clave incorrecta."); return; }
-
-      await crearBackup();
-
-      const { matches, standings, teams } = await fetchTodo();
-      const delByIds = async (table, ids) => {
-        for (let i=0;i<ids.length;i+=1000) {
-          const batch = ids.slice(i, i+1000);
-          const { error } = await supabase.from(table).delete().in("id", batch);
-          if (error) throw new Error(error.message);
-        }
-      };
-      if (matches.length) await delByIds("matches", matches.map(m=>m.id));
-      if (standings.length) await delByIds("initial_standings", standings.map(s=>s.id));
-      if (teams.length) await delByIds("teams", teams.map(t=>t.id));
-
-      await borrarTodosLosLogos();
-
-      alert("Liga reseteada. Todo quedó en 0. Ahora puedes cargar equipos nuevos.");
-      await recargarTodo();
-      setActiveTab("equipos");
-    } catch (e) {
-      alert("No se pudo resetear: " + (e?.message || e));
-    }
-  };
-  /* ===================== DESCARGAS & RESTAURACIÓN ===================== */
-
-  // Descargar JSON (nombre amigable)
-  const downloadBackup = async (name, tsHint) => {
-    try {
-      const { data, error } = await supabase.storage.from("team-logos")
-        .createSignedUrl(`_backups/${name}`, 60);
-      let url = data?.signedUrl;
-
-      if (error || !url) {
-        const pub = supabase.storage.from("team-logos").getPublicUrl(`_backups/${name}`);
-        url = pub?.data?.publicUrl;
-        if (!url) throw new Error("No fue posible generar un enlace de descarga.");
-      }
-
-      const res = await fetch(url);
-      if (!res.ok) throw new Error("No se pudo descargar el backup.");
-      const blob = await res.blob();
-
-      const ts = tsHint || (name.match(/^league-(\d{8}-\d{6})\.json$/)?.[1] ?? "FECHA");
-      const filename = `EVG-backup-${ts}.json`;
-
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(link.href);
-    } catch (e) {
-      alert("No fue posible descargar el backup: " + (e?.message || e));
-    }
-  };
-
-  // Descargar logos (zip) del mismo timestamp
-  const ensureJSZip = () =>
-    new Promise((resolve, reject) => {
-      if (window.JSZip) return resolve(window.JSZip);
-      const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js";
-      s.onload = () => resolve(window.JSZip);
-      s.onerror = () => reject(new Error("No se pudo cargar JSZip"));
-      document.head.appendChild(s);
-    });
-
-  const downloadLogosZip = async (ts) => {
-    try {
-      if (!ts) { alert("Este backup no tiene timestamp."); return; }
-      const JSZip = await ensureJSZip();
-      const zip = new JSZip();
-
-      const prefix = `team-logos-backup/${ts}`;
-      let offset = 0;
-      while (true) {
-        const { data, error } = await supabase.storage.from("team-logos")
-          .list(prefix, { limit: 100, offset });
-        if (error) throw new Error(error.message);
-        if (!data || data.length === 0) break;
-
-        for (const f of data) {
-          if (f.name.endsWith("/")) continue;
-          const path = `${prefix}/${f.name}`;
-          const { data: fileBlob, error: dlErr } = await supabase.storage.from("team-logos").download(path);
-          if (dlErr) { console.warn("No se pudo bajar", path, dlErr.message); continue; }
-          const arrayBuf = await fileBlob.arrayBuffer();
-          zip.file(f.name, arrayBuf);
-        }
-
-        if (data.length < 100) break;
-        offset += 100;
-      }
-
-      const zipBlob = await zip.generateAsync({ type: "blob" });
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(zipBlob);
-      link.download = `EVG-logos-${ts}.zip`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(link.href);
-    } catch (e) {
-      alert("No se pudo generar el ZIP de logos: " + (e?.message || e));
-    }
-  };
-
-  // Restaurar desde archivo (.json)
-  const restaurarDesdeArchivo = async (fileOrBlob) => {
-    try {
-      const text = await (fileOrBlob.text ? fileOrBlob.text() : new Response(fileOrBlob).text());
-      const backup = JSON.parse(text);
-
-      // Restaurar logos si hay carpeta con ese ts
-      if (backup.ts) {
-        await copiarLogos(`team-logos-backup/${backup.ts}`, "");
-      }
-
-      // Limpiar actuales
-      const { matches, standings, teams } = await fetchTodo();
-      const delByIds = async (table, ids) => {
-        for (let i=0;i<ids.length;i+=1000) {
-          const batch = ids.slice(i, i+1000);
-          const { error } = await supabase.from(table).delete().in("id", batch);
-          if (error) throw new Error(error.message);
-        }
-      };
-      if (matches.length) await delByIds("matches", matches.map(m=>m.id));
-      if (standings.length) await delByIds("initial_standings", standings.map(s=>s.id));
-      if (teams.length) await delByIds("teams", teams.map(t=>t.id));
-
-      // Insertar respaldo tal cual estaba
-      if (backup.teams?.length) {
-        const { error } = await supabase.from("teams").insert(backup.teams);
-        if (error) throw new Error("Teams: " + error.message);
-      }
-      if (backup.standings?.length) {
-        const { error } = await supabase.from("initial_standings").insert(backup.standings);
-        if (error) throw new Error("Initial_standings: " + error.message);
-      }
-      if (backup.matches?.length) {
-        const { error } = await supabase.from("matches").insert(backup.matches);
-        if (error) throw new Error("Matches: " + error.message);
-      }
-
-      alert("Backup restaurado correctamente.");
-      await recargarTodo();
-    } catch (e) {
-      alert("No se pudo restaurar desde el archivo: " + (e?.message || e));
-    }
-  };
-
-  // UI helper botón de tabs
-  const TabButton = ({ id, children }) => (
-    <button
-      onClick={() => setActiveTab(id)}
-      style={{
-        padding: "10px 14px",
-        borderRadius: 10,
-        border: "1px solid rgba(255,255,255,0.15)",
-        background: activeTab === id ? "rgba(241,127,38,0.25)" : "transparent",
-        color: "#fff",
-        cursor: "pointer",
-        fontWeight: 700,
-      }}
-    >
-      {children}
-    </button>
-  );
-  TabButton.propTypes = { id: PropTypes.string.isRequired, children: PropTypes.node.isRequired };
+  // ====== RENDER ======
   return (
     <div>
-      {/* HEADER (visual intacto) */}
       <header className="app-header">
         <div />
         <div className="brand-line">
-          <picture>
-            <source srcSet="/logo-evg.webp" type="image/webp" />
-            <img
-              src="/logo-evg.png"
-              alt="Logo Torneo EVG"
-              className="brand-logo"
-              onError={(e) => (e.currentTarget.style.display = "none")}
-            />
-          </picture>
-          <h1 className="brand-title">PANEL ADMIN</h1>
+          <img
+            src="/logo-evg.png"
+            alt="Logo"
+            className="brand-logo"
+            onError={(e) => (e.currentTarget.style.display = "none")}
+          />
+          <h1 className="brand-title">PANEL ADMIN — TORNEO EVG</h1>
         </div>
         <div style={{ justifySelf: "end", display: "flex", gap: 8 }}>
-          <button onClick={onExit} style={{ marginRight: 8 }}>Inicio</button>
-          {session && (
-            <button onClick={cerrarSesion}>Cerrar sesión</button>
-          )}
+          <button onClick={onExit}>Inicio</button>
         </div>
       </header>
 
+      {/* Pestañas */}
+      <nav className="tabs-nav" style={{ marginTop: 8 }}>
+        <button className={`tab-btn ${activeTab === "crear" ? "active" : ""}`} onClick={() => setActiveTab("crear")}>
+          CREAR PARTIDO
+        </button>
+        <button className={`tab-btn ${activeTab === "equipos" ? "active" : ""}`} onClick={() => setActiveTab("equipos")}>
+          GESTIÓN DE EQUIPOS
+        </button>
+        <button className={`tab-btn ${activeTab === "backup" ? "active" : ""}`} onClick={() => setActiveTab("backup")}>
+          BACKUP
+        </button>
+      </nav>
+
       <section style={{ padding: 16 }}>
-        {!session ? (
-          <Login onLogged={(s) => { setSession(s); entrarRapido(); }} />
-        ) : (
+        {loading && (
+          <div className="panel center-max-900" style={{ textAlign: "center", marginBottom: 12 }}>
+            <p style={{ color: "#bbb" }}>Cargando…</p>
+          </div>
+        )}
+
+        {/* TAB: CREAR PARTIDO */}
+        {activeTab === "crear" && (
           <>
-            {/* Tabs */}
-            <div className="center-max-900" style={{ display: "flex", gap: 10, justifyContent: "center", marginBottom: 14 }}>
-              <TabButton id="partidos">Partidos</TabButton>
-              <TabButton id="equipos">Gestión de Equipos</TabButton>
-              <TabButton id="temporada">Temporada</TabButton>
+            <div className="panel center-max-900" style={{ textAlign: "center" }}>
+              <h3>CREAR PARTIDO</h3>
+
+              {/* Controles de creación */}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center", marginBottom: 8 }}>
+                <label>Tipo:</label>
+                <select
+                  value={tipoPartido}
+                  onChange={(e) => {
+                    setTipoPartido(e.target.value);
+                    setEquipo1(""); setEquipo2("");
+                  }}
+                >
+                  <option value="group">Fase de grupos</option>
+                  <option value="elim">Fase eliminatoria</option>
+                </select>
+
+                {tipoPartido === "group" && (
+                  <>
+                    <label>Grupo:</label>
+                    <select
+                      value={grupo}
+                      onChange={(e) => {
+                        setGrupo(e.target.value);
+                        setEquipo1(""); setEquipo2("");
+                      }}
+                    >
+                      {["A","B","C","D","E"].map((code) => (
+                        <option key={code} value={code}>{`Grupo ${code}`}</option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      value={semana}
+                      onChange={(e) => setSemana(Number(e.target.value))}
+                      style={{ width: 90 }}
+                      placeholder="Semana"
+                    />
+                  </>
+                )}
+
+                {tipoPartido === "elim" && (
+                  <>
+                    <label>Fase:</label>
+                    <select
+                      value={faseSel}
+                      onChange={(e) => setFaseSel(e.target.value)}
+                      style={{ minWidth: 180 }}
+                    >
+                      <option value="">— Elegir guardada —</option>
+                      {Array.from(new Set(partidosOrd.filter(p=>p.phase_type==="elim" && p.phase).map(p=>p.phase)))
+                        .sort((a,b)=>a.localeCompare(b))
+                        .map((f) => (
+                          <option key={f} value={f}>{f}</option>
+                        ))}
+                    </select>
+                    <input
+                      placeholder="o escribe un nombre (ej: Cuartos de final)"
+                      value={faseName}
+                      onChange={(e) => setFaseName(e.target.value)}
+                      style={{ minWidth: 260 }}
+                    />
+                    {/* ✏️ EDITAR NOMBRE INLINE */}
+                    <button
+                      title="Renombrar fase seleccionada al nuevo nombre"
+                      onClick={renombrarFaseInline}
+                      disabled={!faseSel || !faseName || faseSel.trim() === faseName.trim()}
+                      style={{ borderColor: "rgba(241,127,38,0.8)" }}
+                    >
+                      ✏️ Editar nombre
+                    </button>
+                  </>
+                )}
+              </div>
+
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", justifyContent: "center" }}>
+                <select
+                  value={equipo1}
+                  onChange={(e) => {
+                    setEquipo1(e.target.value);
+                    setEquipo2("");
+                  }}
+                >
+                  <option value="">Equipo 1</option>
+                  { (tipoPartido === "elim" ? equipos : equipos.filter((t)=> (t.group_label||"").toUpperCase() === grupo)).map((t) => (
+                    <option key={t.id} value={t.name}>{t.name}</option>
+                  ))}
+                </select>
+
+                <select value={equipo2} onChange={(e) => setEquipo2(e.target.value)} disabled={!equipo1}>
+                  <option value="">{equipo1 ? "Rival disponible" : "Elige Equipo 1"}</option>
+                  { (tipoPartido === "elim" ? equipos : equipos.filter((t)=> (t.group_label||"").toUpperCase() === grupo))
+                      .filter((r)=> r.name !== equipo1)
+                      .map((r) => (<option key={r.id} value={r.name}>{r.name}</option>)) }
+                </select>
+
+                <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
+                <input type="time" value={hora} onChange={(e) => setHora(e.target.value)} />
+                <button onClick={guardarPartido} disabled={!equipo1 || !equipo2 || !fecha || !hora}>
+                  Crear Partido
+                </button>
+              </div>
             </div>
 
-            {/* 🔹 NUEVO: panel de carga */}
-            {loading && (
-              <div className="panel center-max-900" style={{ textAlign: "center", marginBottom: 12 }}>
-                <p style={{ color: "#bbb" }}>Cargando datos…</p>
-              </div>
-            )}
-
-            {/* ======== TEMPORADA ======== */}
-            {activeTab === "temporada" && (
-              <div className="panel center-max-900" style={{ marginBottom: 16 }}>
-                <h3 style={{ textAlign: "center", marginBottom: 10 }}>GESTIÓN DE TEMPORADA</h3>
-
-                <div style={{ textAlign: "center", marginBottom: 14 }}>
-                  <p style={{ fontSize: 12, opacity: 0.8 }}>
-                    Máximo <strong>2</strong> backups. Puedes <strong>crear</strong>, <strong>descargar</strong> y <strong>restaurar</strong>.
-                  </p>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
-                    <button onClick={crearBackupManual}>Crear backup ahora</button>
-                    <button onClick={resetearLigaConBackup} style={{ background: "#a33" }}>
-                      Resetear liga (con backup)
-                    </button>
-                    <button onClick={async () => {
-                      const ok = window.confirm("Esto restaurará el **último** backup guardado en Storage. ¿Continuar?");
-                      if (!ok) return;
-                      try {
-                        if (!backups.length) { alert("No hay backups disponibles."); return; }
-                        const last = backups[0];
-                        const { data, error } = await supabase.storage.from("team-logos")
-                          .download(`_backups/${last.name}`);
-                        if (error) throw new Error(error.message);
-                        await restaurarDesdeArchivo(data);
-                      } catch (e) {
-                        alert("No se pudo restaurar: " + (e?.message || e));
-                      }
-                    }}>
-                      Restaurar último backup
-                    </button>
-                  </div>
-                </div>
-
-                {/* Lista de backups (máx 2) */}
-                <div className="panel" style={{ maxWidth: 900, margin: "0 auto 12px auto" }}>
-                  <h4 style={{ textAlign: "center", marginBottom: 8 }}>Backups recientes (máx 2)</h4>
-                  {backups.length === 0 ? (
-                    <p style={{ textAlign: "center", opacity: 0.75 }}>No hay backups.</p>
-                  ) : (
-                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                      <thead>
-                        <tr style={{ opacity: 0.85 }}>
-                          <th style={{ textAlign: "left", padding: "6px 8px" }}>Archivo</th>
-                          <th style={{ textAlign: "left", padding: "6px 8px" }}>Fecha y hora</th>
-                          <th style={{ textAlign: "left", padding: "6px 8px" }}>Acciones</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {backups.map((bk) => (
-                          <tr key={bk.name} style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-                            <td style={{ padding: "6px 8px" }}>{bk.name}</td>
-                            <td style={{ padding: "6px 8px" }}>{bk.pretty}</td>
-                            <td style={{ padding: "6px 8px" }}>
-                              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                                <button onClick={() => downloadBackup(bk.name, bk.ts)}>Descargar JSON</button>
-                                <button onClick={() => downloadLogosZip(bk.ts)}>Descargar logos</button>
-                                <button onClick={async () => {
-                                  try {
-                                    const { data, error } = await supabase.storage.from("team-logos")
-                                      .download(`_backups/${bk.name}`);
-                                    if (error) throw new Error(error.message);
-                                    await restaurarDesdeArchivo(data);
-                                  } catch (e) {
-                                    alert("No se pudo restaurar este backup: " + (e?.message || e));
-                                  }
-                                }}>
-                                  Restaurar este
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-
-                {/* Restaurar desde archivo (.json) */}
-                <div className="panel" style={{ maxWidth: 900, margin: "0 auto" }}>
-                  <h4 style={{ textAlign: "center", marginBottom: 8 }}>Restaurar desde archivo (.json)</h4>
-                  <div style={{ display: "flex", justifyContent: "center", gap: 8, flexWrap: "wrap" }}>
-                    <input
-                      type="file"
-                      accept="application/json"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
-                        const ok = window.confirm("Esto reemplazará por completo el estado actual con el del archivo. ¿Continuar?");
-                        if (!ok) return;
-                        restaurarDesdeArchivo(file);
-                        e.target.value = "";
-                      }}
-                    />
-                  </div>
-                  <p style={{ fontSize: 12, opacity: 0.7, marginTop: 8, textAlign: "center" }}>
-                    Tip: descarga un backup (JSON + logos ZIP) y podrás restaurar cuando quieras.
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* ======== GESTIÓN DE EQUIPOS ======== */}
-            {activeTab === "equipos" && (
-              <div className="panel center-max-900" style={{ marginBottom: 16 }}>
-                <h3 style={{ textAlign: "center" }}>GESTIÓN DE EQUIPOS</h3>
-
-                {/* Crear equipo */}
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", justifyContent: "center", marginBottom: 12 }}>
-                  <input
-                    placeholder="Nombre del equipo"
-                    value={nuevoNombre}
-                    onChange={(e) => setNuevoNombre(e.target.value)}
-                    style={{ minWidth: 220 }}
-                  />
-                  <select value={nuevoGrupo} onChange={(e) => setNuevoGrupo(e.target.value)}>
-                    <option value="A">Grupo A</option>
-                    <option value="B">Grupo B</option>
-                  </select>
-                  <button onClick={crearEquipo}>Crear equipo</button>
-                </div>
-
-                {/* 🔹 NUEVO: estado "Sin equipos." */}
-                {!loading && (equipos?.length ?? 0) === 0 && (
-                  <div className="panel" style={{ textAlign: "center", marginBottom: 12 }}>
-                    <p style={{ color: "#bbb" }}>Sin equipos.</p>
-                  </div>
-                )}
-
-                {/* Tabla equipos */}
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead>
-                      <tr style={{ opacity: 0.85 }}>
-                        <th style={{ textAlign: "left", padding: "6px 8px" }}>Logo</th>
-                        <th style={{ textAlign: "left", padding: "6px 8px" }}>Nombre</th>
-                        <th style={{ textAlign: "left", padding: "6px 8px" }}>Grupo</th>
-                        <th style={{ textAlign: "left", padding: "6px 8px" }}>Subir nuevo logo</th>
-                        <th style={{ textAlign: "left", padding: "6px 8px" }}>Acciones</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {equipos.map((t) => {
-                        const draft = localEdits[t.id] || {};
-                        const name = draft.name ?? t.name;
-                        const groupLabel = draft.group_label ?? t.group_label;
-                        const srcLogo = t.logo_url || `/logos/${slugify(t.name)}.webp`;
-                        return (
-                          <tr key={t.id} style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-                            <td style={{ padding: "6px 8px" }}>
-                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                <img
-                                  src={srcLogo}
-                                  alt={`Logo ${t.name}`}
-                                  style={{ width: 36, height: 36, objectFit: "contain", background: "rgba(255,255,255,0.06)", borderRadius: 6 }}
-                                  onError={(e) => {
-                                    if (srcLogo.endsWith(".webp")) e.currentTarget.src = `/logos/${slugify(t.name)}.png`;
-                                    else e.currentTarget.src = "/logos/_default.png";
-                                  }}
-                                />
-                              </div>
-                            </td>
-                            <td style={{ padding: "6px 8px", minWidth: 220 }}>
-                              <input
-                                value={name}
-                                onChange={(e) => handleEditLocal(t.id, "name", e.target.value)}
-                                style={{ width: "100%" }}
-                              />
-                            </td>
-                            <td style={{ padding: "6px 8px" }}>
-                              <select
-                                value={groupLabel}
-                                onChange={(e) => handleEditLocal(t.id, "group_label", e.target.value)}
-                              >
-                                <option value="A">A</option>
-                                <option value="B">B</option>
-                              </select>
-                            </td>
-                            <td style={{ padding: "6px 8px" }}>
-                              <input
-                                type="file"
-                                accept=".webp,.png,.jpg,.jpeg"
-                                onChange={(e) => {
-                                  const f = e.target.files?.[0] || null;
-                                  setLogoFiles((prev) => ({ ...prev, [t.id]: f }));
-                                }}
-                              />
-                            </td>
-                            <td style={{ padding: "6px 8px" }}>
-                              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                                <button onClick={() => guardarEquipo(t)} disabled={subiendoLogoId === t.id}>
-                                  {subiendoLogoId === t.id ? "Subiendo..." : "Guardar"}
-                                </button>
-                                <button onClick={() => eliminarEquipo(t.id)} style={{ background: "rgba(255,0,0,0.25)", borderColor: "rgba(255,0,0,0.6)" }}>
-                                  Eliminar
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {/* ======== PARTIDOS (tarjetas) ======== */}
-            {activeTab === "partidos" && (
-              <>
-                {/* CREAR PARTIDO */}
-                <div className="panel center-max-900" style={{ textAlign: "center" }}>
-                  <h3>CREAR PARTIDO</h3>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", justifyContent: "center" }}>
-                    <select value={grupo} onChange={(e) => { setGrupo(e.target.value); setEquipo1(""); setEquipo2(""); }}>
-                      <option value="A">Grupo A</option>
-                      <option value="B">Grupo B</option>
-                    </select>
-
-                    <select value={equipo1} onChange={(e) => { setEquipo1(e.target.value); setEquipo2(""); }}>
-                      <option value="">Equipo 1</option>
-                      {equipos.filter((t) => t.group_label === grupo).map((t) => (
-                        <option key={t.id} value={t.name}>{t.name}</option>
-                      ))}
-                    </select>
-
-                    <select
-                      value={equipo2}
-                      onChange={(e) => setEquipo2(e.target.value)}
-                      disabled={!equipo1}
-                      title={!equipo1 ? "Selecciona primero Equipo 1" : undefined}
-                    >
-                      <option value="">{equipo1 ? "Rival disponible" : "Elige Equipo 1 primero"}</option>
-                      {rivalesDisponibles.map((name) => (
-                        <option key={name} value={name}>{name}</option>
-                      ))}
-                    </select>
-
-                    <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
-                    <input type="time" value={hora} onChange={(e) => setHora(e.target.value)} />
-                    <input type="number" value={semana} onChange={(e) => setSemana(Number(e.target.value))} style={{ width: 90 }} placeholder="Semana" />
-                    <button onClick={guardarPartido} disabled={!equipo1 || !equipo2 || !fecha || !hora}>
-                      Crear Partido
-                    </button>
-                  </div>
-                </div>
-
-                {/* Filtro Semana */}
-                <div style={{ marginTop: 12, textAlign: "center" }}>
-                  <label style={{ marginRight: 8 }}>Ver (Admin):</label>
-                  <select
-                    className="week-select-admin"
-                    value={typeof semanaAdminSeleccionada === "number" ? semanaAdminSeleccionada : ""}
-                    onChange={(e) => setSemanaAdminSeleccionada(parseInt(e.target.value, 10))}
-                  >
-                    {semanasDisponibles.map((w) => (
-                      <option key={w} value={w}>Semana {w}</option>
+            {/* SELECTOR igual a Programación */}
+            <div style={{ display: "flex", justifyContent: "center", gap: 8, alignItems: "center", margin: "12px auto 8px", flexWrap: "wrap" }}>
+              <span>Ver (Admin):</span>
+              <select value={selector} onChange={(e) => setSelector(e.target.value)}>
+                {semanasGrupos.length > 0 && (
+                  <optgroup label="Semanas">
+                    {semanasGrupos.map((w) => (
+                      <option key={`S${w}`} value={`S:${w}`}>{`Semana ${w}`}</option>
                     ))}
-                  </select>
-                </div>
-
-                {/* 🔹 NUEVO: sin semanas cargadas */}
-                {!loading && semanasDisponibles.length === 0 && (
-                  <div className="panel center-max-900" style={{ textAlign: "center", marginTop: 10 }}>
-                    <p style={{ color: "#bbb" }}>No hay partidos cargados.</p>
-                  </div>
+                  </optgroup>
                 )}
+                {feMeta.feSemanas.length > 0 && (
+                  <optgroup label="Fase Eliminatoria (por semana)">
+                    {feMeta.feSemanas.map((n) => (
+                      <option key={`FEW${n}`} value={`FEW:${n}`}>{`F.E. Semana ${n}`}</option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+            </div>
 
-                {/* LISTA / EDICIÓN (tarjetas) */}
-                <div className="center-max-900" style={{ marginTop: 10 }}>
-                  {(() => {
-                    const ymd = (dt) => {
-                      const d = new Date(dt);
-                      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-                    };
-                    const g = {};
-                    (partidosFiltrados || []).forEach((m) => {
-                      if (!m?.match_datetime) return;
-                      const k = ymd(m.match_datetime);
-                      g[k] = g[k] || [];
-                      g[k].push(m);
-                    });
-                    const grupos = Object.entries(g).sort(([a],[b]) => a.localeCompare(b));
-                    if (!grupos.length) return <p style={{ color: "#bbb", textAlign: "center" }}>No hay partidos para la semana seleccionada.</p>;
-                    return grupos.map(([diaKey, arr]) => (
-                      <div key={diaKey} style={{ marginBottom: 8 }}>
-                        <h4 style={{ color: "#ffffff", opacity: 0.95, textAlign: "center" }}>
-                          {(() => {
-                            const f = new Date(arr[0].match_datetime);
-                            const dias = ["DOMINGO","LUNES","MARTES","MIÉRCOLES","JUEVES","VIERNES","SÁBADO"];
-                            const meses = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
-                            return `${dias[f.getDay()]} ${f.getDate()} de ${meses[f.getMonth()]}`;
-                          })()}
-                        </h4>
-                        <ul className="cards-grid" style={{ gridTemplateColumns: "minmax(300px, 900px)", justifyContent: "center" }}>
-                          {arr.map((p) => {
-                            const editing = editando === p.id;
-                            const haveScore = p.home_score != null && p.away_score != null;
-                            const nameHome = equipos.find((t) => t.id === p.home_team)?.name || "??";
-                            const nameAway = equipos.find((t) => t.id === p.away_team)?.name || "??";
+            {/* LISTADO AGRUPADO POR DÍA EN COLUMNAS (igual a Programación) */}
+            <div style={gridColsStyle}>
+              {(() => {
+                if (!listaFiltrada.length) {
+                  return <p style={{ color: "#bbb", textAlign: "center", gridColumn: "1 / -1" }}>No hay partidos.</p>;
+                }
+                return gruposPorDia.map(([diaKey, arr]) => (
+                  <section
+                    key={diaKey}
+                    className="panel"
+                    style={{ padding: 8, width: "100%", maxWidth: 420, margin: "0 auto" }}
+                  >
+                    <h4 style={{ color: "#fff", opacity: 0.95, textAlign: "center", margin: "6px 0 10px", fontSize: "clamp(14px, 2.2vw, 16px)", lineHeight: 1.2 }}>
+                      {tituloDia(arr[0].match_datetime)}
+                    </h4>
 
-                            return (
-                              <li
-                                key={p.id}
-                                className={`admin-card ${!editing ? "hoverable" : ""}`}
-                                style={{
-                                  textAlign: "center",
-                                  display: "flex",
-                                  flexDirection: "column",
-                                  gap: 10,
-                                  position: "relative",
-                                  overflow: "hidden",
-                                  background: "linear-gradient(rgba(0,0,0,0.40), rgba(0,0,0,0.40)), url('/decor/field-grid.svg') center/120% no-repeat",
-                                }}
-                              >
-                                <div className="admin-toprow" style={{ display: "grid", gridTemplateColumns: "1fr", alignItems: "center" }}>
-                                  <div className="admin-badges" style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center", flexWrap: "wrap" }}>
-                                    <span className="admin-badge admin-badge-group">GRUPO {p.group_label}</span>
-                                    <span className="admin-badge admin-badge-time">{(() => {
-                                      const f = new Date(p.match_datetime);
-                                      let h = f.getHours();
-                                      const m = String(f.getMinutes()).padStart(2, "0");
-                                      const ampm = h >= 12 ? "pm" : "am";
-                                      h = h % 12 || 12;
-                                      return `${h}:${m} ${ampm}`;
-                                    })()}</span>
-                                  </div>
-                                </div>
+                    <ul style={listGridFull}>
+                      {arr.map((p) => {
+                        const haveScore = p.home_score != null && p.away_score != null;
 
-                                {/* Nombres + marcador */}
-                                <div
-                                  className="names-row"
-                                  style={{
-                                    display: "grid",
-                                    gridTemplateColumns: "minmax(0,1fr) auto minmax(0,1fr)",
-                                    gap: 10,
-                                    alignItems: "center",
-                                    textAlign: "center",
-                                    fontSize: "clamp(11px, 1.9vw, 14px)",
-                                    lineHeight: 1.1,
-                                  }}
-                                >
-                                  <span className="team-name" title={nameHome}
-                                    style={{
-                                      display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
-                                      overflow: "hidden", textOverflow: "ellipsis", wordBreak: "break-word",
-                                      whiteSpace: "normal", minWidth: 0, padding: "0 2px", fontWeight: 700,
-                                    }}
-                                  >
-                                    {nameHome}
-                                  </span>
-
-                                  <div className="big-score"
-                                    style={{
-                                      display: "inline-flex", alignItems: "center", justifyContent: "center",
-                                      whiteSpace: "nowrap", lineHeight: 1,
-                                      fontSize: "clamp(18px, 5.5vw, 26px)", minWidth: 56,
-                                      padding: "6px 12px", borderRadius: 10,
-                                      background: "rgba(241,127,38,0.22)",
-                                      border: "1px solid rgba(241,127,38,0.65)",
-                                      color: "#ffd7b5", fontWeight: 900, letterSpacing: "1px",
-                                    }}
-                                  >
-                                    {haveScore ? `${p.home_score} - ${p.away_score}` : "VS"}
-                                  </div>
-
-                                  <span className="team-name" title={nameAway}
-                                    style={{
-                                      display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
-                                      overflow: "hidden", textOverflow: "ellipsis", wordBreak: "break-word",
-                                      whiteSpace: "normal", minWidth: 0, padding: "0 2px", fontWeight: 700,
-                                    }}
-                                  >
-                                    {nameAway}
-                                  </span>
-                                </div>
-
-                                {editing && (
+                        return (
+                          <li key={p.id} className="admin-card hoverable"
+                              style={{ width: "100%", textAlign: "center", padding: 8, ...solidCard }}>
+                            {/* CHIPS */}
+                            <div style={{ display: "flex", justifyContent: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+                              <span style={chipHora}>
+                                <span style={{ color: ORANGE }} aria-hidden>⏱</span>
+                                <span>{formatearHora(p.match_datetime)}</span>
+                              </span>
+                              <span style={chipMeta}>
+                                {p.phase_type === "elim" ? (
                                   <>
-                                    <div className="admin-bottomrow" style={{ gap: 6, justifyContent: "center", display: "flex", flexWrap: "wrap" }}>
-                                      <span title={nameHome} style={{ display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 180 }}>{nameHome}</span>
-                                      <input type="number" placeholder="Home" style={{ width: 70 }}
-                                        value={editDraft?.home_score ?? ""}
-                                        onChange={(e) => setEditDraft((d) => ({ ...d, home_score: e.target.value === "" ? "" : Number(e.target.value) }))} />
-                                      <span>-</span>
-                                      <input type="number" placeholder="Away" style={{ width: 70 }}
-                                        value={editDraft?.away_score ?? ""}
-                                        onChange={(e) => setEditDraft((d) => ({ ...d, away_score: e.target.value === "" ? "" : Number(e.target.value) }))} />
-                                      <span title={nameAway} style={{ display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 180 }}>{nameAway}</span>
-                                    </div>
-
-                                    <div className="admin-bottomrow" style={{ gap: 8, justifyContent: "center", display: "flex", flexWrap: "wrap" }}>
-                                      <input type="date" value={editDraft?.edit_date ?? ""} onChange={(e) => setEditDraft((d) => ({ ...d, edit_date: e.target.value }))} />
-                                      <input type="time" value={editDraft?.edit_time ?? ""} onChange={(e) => setEditDraft((d) => ({ ...d, edit_time: e.target.value }))} />
-                                      <input type="number" style={{ width: 90 }} value={editDraft?.week_number ?? ""} onChange={(e) => setEditDraft((d) => ({ ...d, week_number: e.target.value === "" ? null : Number(e.target.value) }))} placeholder="Semana" />
-                                    </div>
+                                    <span style={{ color: ORANGE, fontWeight: 900 }}>FASE</span>&nbsp;{p.phase}
+                                  </>
+                                ) : (
+                                  <>
+                                    <span style={{ color: ORANGE, fontWeight: 900 }}>GRUPO</span>&nbsp;{p.group_label}
                                   </>
                                 )}
+                              </span>
+                            </div>
 
-                                <div className="admin-actions" style={{ display: "flex", justifyContent: "center", gap: 8, flexWrap: "wrap", marginTop: 6, paddingTop: 6, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-                                  {!editing ? (
-                                    <>
-                                      <button onClick={() => empezarEdicion(p)}>Editar</button>
-                                      <button onClick={() => eliminarPartido(p.id)}>Eliminar</button>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <button onClick={actualizarEdicion}>Guardar</button>
-                                      <button onClick={cancelarEdicion}>Cancelar</button>
-                                    </>
-                                  )}
+                            {/* Logos + marcador + nombres (compacto) */}
+                            <div className="logos-row" style={filaGrid}>
+                              <span style={{ ...nombreStyle }}>{nombreEquipoById(p.home_team)}</span>
+                              <div className="big-score" style={scoreBox}>{haveScore ? `${p.home_score} - ${p.away_score}` : "VS"}</div>
+                              <span style={{ ...nombreStyle }}>{nombreEquipoById(p.away_team)}</span>
+                            </div>
+
+                            {/* Acciones admin */}
+                            <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginTop: 8 }}>
+                              <button onClick={() => {
+                                setEditando(p.id);
+                                const d = new Date(p.match_datetime);
+                                const Y = d.getFullYear();
+                                const M = String(d.getMonth() + 1).padStart(2, "0");
+                                const D = String(d.getDate()).padStart(2, "0");
+                                const h = String(d.getHours()).padStart(2, "0");
+                                const m = String(d.getMinutes()).padStart(2, "0");
+                                setEditDraft({ ...p, edit_date: `${Y}-${M}-${D}`, edit_time: `${h}:${m}` });
+                              }}>
+                                Editar
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  if (!window.confirm("¿Eliminar partido?")) return;
+                                  await supabase.from("matches").delete().eq("id", p.id);
+                                  await recargarTodo();
+                                }}
+                                style={{ background: "rgba(255,0,0,0.25)", borderColor: "rgba(255,0,0,0.6)" }}
+                              >
+                                Eliminar
+                              </button>
+                            </div>
+
+                            {/* Editor inline */}
+                            {editando === p.id && (
+                              <div className="panel" style={{ padding: 8, marginTop: 8 }}>
+                                <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+                                  <input type="number" placeholder="Home" value={editDraft.home_score ?? ""} onChange={(e) => setEditDraft((d) => ({ ...d, home_score: e.target.value }))} />
+                                  <input type="number" placeholder="Away" value={editDraft.away_score ?? ""} onChange={(e) => setEditDraft((d) => ({ ...d, away_score: e.target.value }))} />
+                                  <input type="date" value={editDraft.edit_date || ""} onChange={(e) => setEditDraft((d) => ({ ...d, edit_date: e.target.value }))} />
+                                  <input type="time" value={editDraft.edit_time || ""} onChange={(e) => setEditDraft((d) => ({ ...d, edit_time: e.target.value }))} />
+                                  <input type="number" value={editDraft.week_number ?? ""} placeholder="Semana (solo grupos)" onChange={(e) => setEditDraft((d) => ({ ...d, week_number: e.target.value }))} />
                                 </div>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      </div>
-                    ));
-                  })()}
-                </div>
-              </>
-            )}
+                                <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 8 }}>
+                                  <button
+                                    onClick={async () => {
+                                      const localCombined = editDraft.edit_date && editDraft.edit_time ? `${editDraft.edit_date}T${editDraft.edit_time}` : null;
+                                      const iso = localCombined ? localToISOWithOffset(localCombined) : null;
+                                      const payload = {
+                                        home_score: editDraft.home_score === "" ? null : Number(editDraft.home_score),
+                                        away_score: editDraft.away_score === "" ? null : Number(editDraft.away_score),
+                                        played: editDraft.home_score !== "" && editDraft.away_score !== "",
+                                        match_datetime: iso,
+                                        week_number: editDraft.phase_type === "elim" ? null : (Number(editDraft.week_number) || null),
+                                      };
+                                      const { error } = await supabase.from("matches").update(payload).eq("id", editDraft.id);
+                                      if (error) { alert("No se pudo actualizar: " + error.message); return; }
+                                      setEditando(null); setEditDraft(null);
+                                      await recargarTodo(); // selector se mantiene
+                                    }}
+                                  >
+                                    Guardar
+                                  </button>
+                                  <button onClick={() => { setEditando(null); setEditDraft(null); }}>Cancelar</button>
+                                </div>
+                              </div>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </section>
+                ));
+              })()}
+            </div>
           </>
+        )}
+
+        {/* TAB: GESTIÓN DE EQUIPOS (tu UI original) */}
+        {activeTab === "equipos" && (
+          <div className="panel center-max-900" style={{ marginTop: 0 }}>
+            <h3 style={{ textAlign: "center" }}>GESTIÓN DE EQUIPOS (TORNEO)</h3>
+            {/* tu UI de equipos permanece igual */}
+          </div>
+        )}
+
+        {/* TAB: BACKUP (con subida a Storage) */}
+        {activeTab === "backup" && (
+          <div className="panel center-max-900" style={{ textAlign: "center" }}>
+            <h3>BACKUP</h3>
+            <p style={{ opacity: 0.8, marginBottom: 8 }}>
+              Exporta/Importa datos (equipos, standings, partidos) del Torneo EVG.
+            </p>
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+              <button
+                onClick={async () => {
+                  setLoading(true);
+                  try {
+                    const { data: t } = await supabase.from("teams").select("*");
+                    const { data: s } = await supabase.from("initial_standings").select("*");
+                    const { data: m } = await supabase.from("matches").select("*");
+                    const blob = new Blob([JSON.stringify({ teams: t, standings: s, matches: m }, null, 2)], { type: "application/json" });
+                    const a = document.createElement("a");
+                    a.href = URL.createObjectURL(blob);
+                    a.download = `backup-evg-${Date.now()}.json`;
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+              >
+                Descargar backup (.json)
+              </button>
+
+              <button
+                onClick={async () => {
+                  setLoading(true);
+                  try {
+                    const { data: auth } = await supabase.auth.getSession();
+                    if (!auth?.session) {
+                      alert("Para guardar en Storage necesitas sesión iniciada.");
+                      return;
+                    }
+
+                    const [{ data: t }, { data: s }, { data: m }] = await Promise.all([
+                      supabase.from("teams").select("*"),
+                      supabase.from("initial_standings").select("*"),
+                      supabase.from("matches").select("*"),
+                    ]);
+                    const payload = JSON.stringify({ teams: t || [], standings: s || [], matches: m || [] }, null, 2);
+                    const blob = new Blob([payload], { type: "application/json" });
+                    const fileName = `evg-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+
+                    const up = await supabase.storage.from("backups").upload(fileName, blob, {
+                      upsert: false,
+                      contentType: "application/json",
+                      cacheControl: "3600",
+                    });
+
+                    if (up?.error) {
+                      if (String(up.error.message || "").toLowerCase().includes("bucket not found")) {
+                        alert(
+                          "El bucket 'backups' no existe.\n\nCrea el bucket llamado EXACTAMENTE: backups\n(Dashboard → Storage → New bucket) y vuelve a intentar."
+                        );
+                      } else {
+                        alert("Error al guardar en Supabase: " + up.error.message);
+                      }
+                      return;
+                    }
+
+                    const { data: pub } = supabase.storage.from("backups").getPublicUrl(fileName);
+                    let msg = `Backup guardado como ${fileName}`;
+                    if (pub?.publicUrl) {
+                      msg += `\nURL pública:\n${pub.publicUrl}`;
+                    } else {
+                      const { data: signed } = await supabase.storage.from("backups").createSignedUrl(fileName, 60 * 60);
+                      if (signed?.signedUrl) msg += `\nURL temporal (1h):\n${signed.signedUrl}`;
+                    }
+                    alert(msg);
+                  } catch (err) {
+                    alert("Error al guardar en Supabase: " + (err?.message || String(err)));
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+              >
+                Guardar backup en Supabase
+              </button>
+
+              <label className="button-like">
+                Importar backup (.json)
+                <input
+                  type="file"
+                  accept="application/json"
+                  style={{ display: "none" }}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    if (!window.confirm("Restaurar backup? Esto insertará/actualizará registros.")) return;
+                    const text = await file.text();
+                    const { teams = [], standings = [], matches = [] } = JSON.parse(text || "{}");
+                    setLoading(true);
+                    try {
+                      if (teams.length) await supabase.from("teams").upsert(teams, { onConflict: "id" });
+                      if (standings.length) await supabase.from("initial_standings").upsert(standings, { onConflict: "team_id" });
+                      if (matches.length) await supabase.from("matches").upsert(matches, { onConflict: "id" });
+                      alert("Backup restaurado.");
+                      await recargarTodo();
+                    } catch (err) {
+                      alert("Error al restaurar: " + (err?.message || String(err)));
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                />
+              </label>
+            </div>
+          </div>
         )}
       </section>
     </div>
   );
 }
-
-AdminPage.propTypes = { onExit: PropTypes.func.isRequired };
-
-/* ==================== LOGIN ==================== */
-function Login({ onLogged }) {
-  const [email, setEmail] = useState("");
-  const [pass, setPass] = useState("");
-  return (
-    <div style={{ display: "flex", justifyContent: "center" }}>
-      <div className="panel center-max-900" style={{ textAlign: "center", margin: "32px auto", maxWidth: 420, width: "100%" }}>
-        <h3>Login</h3>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", justifyContent: "center" }}>
-          <input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-          <input placeholder="Password" type="password" value={pass} onChange={(e) => setPass(e.target.value)} />
-          <button
-            onClick={async () => {
-              try {
-                const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
-                if (error) { alert("Error: " + error.message); return; }
-                onLogged(data.session || null); // el padre llama entrarRapido()
-              } catch {
-                alert("Error al iniciar sesión");
-              }
-            }}
-          >
-            Entrar
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-Login.propTypes = { onLogged: PropTypes.func.isRequired };

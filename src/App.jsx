@@ -1,4 +1,3 @@
-// src/App.jsx
 import React, { useEffect, useRef, useState } from "react";
 import "./styles/base.css";
 import "./styles/evg.css";
@@ -30,18 +29,19 @@ function App() {
 
   // EVG
   const [grupoA, setGrupoA] = useState([]);
-  const [grupoB, setGrupoB] = useState([]); // <-- CORREGIDO (antes decía "the [grupoB, ...]")
+  const [grupoB, setGrupoB] = useState([]);
   const [partidosEVG, setPartidosEVG] = useState([]);
   const [equiposEVG, setEquiposEVG] = useState([]);
   const [statsViewEVG, setStatsViewEVG] = useState("valla");
   const [activeTabEVG, setActiveTabEVG] = useState("tablas");
   const [showLanding, setShowLanding] = useState(true);
+  const [statsAllEVG, setStatsAllEVG] = useState([]); // global (grupos + elim)
 
   // COPA
   const [copaEquipos, setCopaEquipos] = useState([]);
   const [copaGrupos, setCopaGrupos] = useState({});
   const [copaPartidos, setCopaPartidos] = useState([]);
-  const [copaStatsAll, setCopaStatsAll] = useState([]); // incluye eliminatorias
+  const [copaStatsAll, setCopaStatsAll] = useState([]);
   const [statsViewCOPA, setStatsViewCOPA] = useState("valla");
   const [activeTabCOPA, setActiveTabCOPA] = useState("tablas");
 
@@ -89,10 +89,12 @@ function App() {
     const { data: matches } = await supabase.from("matches").select("*").order("match_datetime", { ascending: true });
 
     setEquiposEVG(teams || []);
-    const porGrupo = { A: [], B: [] };
+
+    // POSICIONES POR GRUPO (NO sumamos eliminatorias)
+    const map = new Map();
     (teams || []).forEach((t) => {
       const st = (standings || []).find((s) => s.team_id === t.id);
-      porGrupo[t.group_label].push({
+      const row = {
         equipo: t.name,
         pts: st?.points || 0,
         pj: st?.played || 0,
@@ -103,39 +105,61 @@ function App() {
         gc: st?.ga || 0,
         dg: (st?.gf || 0) - (st?.ga || 0),
         team_id: t.id,
+      };
+      const key = (t.group_label || "A").toUpperCase();
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(row);
+    });
+    (matches || []).forEach((m) => {
+      if (m.home_score == null || m.away_score == null) return;
+      if (m.phase_type === "elim") return; // <- clave: NO sumar a posiciones
+      const g = map.get((m.group_label || "A").toUpperCase());
+      if (!g) return;
+      const a = g.find((t) => t.team_id === m.home_team);
+      const b = g.find((t) => t.team_id === m.away_team);
+      if (!a || !b) return;
+      a.pj++; b.pj++;
+      a.gf += m.home_score; a.gc += m.away_score; a.dg = a.gf - a.gc;
+      b.gf += m.away_score; b.gc += m.home_score; b.dg = b.gf - b.gc;
+      if (m.home_score > m.away_score) { a.pg++; a.pts += 2; b.pp++; }
+      else if (m.home_score < m.away_score) { b.pg++; b.pts += 2; a.pp++; }
+      else { a.pe++; b.pe++; a.pts += 1; b.pts += 1; }
+    });
+
+    setGrupoA(map.get("A") || []);
+    setGrupoB(map.get("B") || []);
+    setPartidosEVG(matches || []);
+
+    // ESTADÍSTICAS GLOBALES (SÍ suman eliminatorias)
+    const allMap = new Map();
+    (teams || []).forEach((t) => {
+      const st = (standings || []).find((s) => s.team_id === t.id);
+      allMap.set(t.id, {
+        equipo: t.name,
+        team_id: t.id,
+        pts: st?.points || 0,
+        pj: st?.played || 0,
+        pg: st?.wins || 0,
+        pe: st?.draws || 0,
+        pp: st?.losses || 0,
+        gf: st?.gf || 0,
+        gc: st?.ga || 0,
+        dg: (st?.gf || 0) - (st?.ga || 0),
       });
     });
     (matches || []).forEach((m) => {
       if (m.home_score == null || m.away_score == null) return;
-      const a = porGrupo[m.group_label]?.find((t) => t.team_id === m.home_team);
-      const b = porGrupo[m.group_label]?.find((t) => t.team_id === m.away_team);
+      const a = allMap.get(m.home_team);
+      const b = allMap.get(m.away_team);
       if (!a || !b) return;
-      a.pj++;
-      b.pj++;
-      a.gf += m.home_score;
-      a.gc += m.away_score;
-      a.dg = a.gf - a.gc;
-      b.gf += m.away_score;
-      b.gc += m.home_score;
-      b.dg = b.gf - b.gc;
-      if (m.home_score > m.away_score) {
-        a.pg++;
-        a.pts += 2;
-        b.pp++;
-      } else if (m.home_score < m.away_score) {
-        b.pg++;
-        b.pts += 2;
-        a.pp++;
-      } else {
-        a.pe++;
-        b.pe++;
-        a.pts += 1;
-        b.pts += 1;
-      }
+      a.pj++; b.pj++;
+      a.gf += m.home_score; a.gc += m.away_score; a.dg = a.gf - a.gc;
+      b.gf += m.away_score; b.gc += m.home_score; b.dg = b.gf - b.gc;
+      if (m.home_score > m.away_score) { a.pg++; a.pts += 2; b.pp++; }
+      else if (m.home_score < m.away_score) { b.pg++; b.pts += 2; a.pp++; }
+      else { a.pe++; b.pe++; a.pts += 1; b.pts += 1; }
     });
-    setGrupoA(porGrupo.A || []);
-    setGrupoB(porGrupo.B || []);
-    setPartidosEVG(matches || []);
+    setStatsAllEVG(Array.from(allMap.values()));
   }
 
   // COPA público
@@ -179,41 +203,24 @@ function App() {
     });
     (matches || []).forEach((m) => {
       if (m.home_score == null || m.away_score == null) return;
-      if (m.phase_type === "elim") return; // NO suman a grupos
+      if (m.phase_type === "elim") return;
       const g = map.get((m.group_label || "A").toUpperCase());
       if (!g) return;
       const a = g.find((t) => t.team_id === m.home_team);
       const b = g.find((t) => t.team_id === m.away_team);
       if (!a || !b) return;
-      a.pj++;
-      b.pj++;
-      a.gf += m.home_score;
-      a.gc += m.away_score;
-      a.dg = a.gf - a.gc;
-      b.gf += m.away_score;
-      b.gc += m.home_score;
-      b.dg = b.gf - b.gc;
-      if (m.home_score > m.away_score) {
-        a.pg++;
-        a.pts += 2;
-        b.pp++;
-      } else if (m.home_score < m.away_score) {
-        b.pg++;
-        b.pts += 2;
-        a.pp++;
-      } else {
-        a.pe++;
-        b.pe++;
-        a.pts += 1;
-        b.pts += 1;
-      }
+      a.pj++; b.pj++;
+      a.gf += m.home_score; a.gc += m.away_score; a.dg = a.gf - a.gc;
+      b.gf += m.away_score; b.gc += m.home_score; b.dg = b.gf - b.gc;
+      if (m.home_score > m.away_score) { a.pg++; a.pts += 2; b.pp++; }
+      else if (m.home_score < m.away_score) { b.pg++; b.pts += 2; a.pp++; }
+      else { a.pe++; b.pe++; a.pts += 1; b.pts += 1; }
     });
     const obj = Object.fromEntries([...map.entries()].sort((a, b) => a[0].localeCompare(b[0])));
     setCopaGrupos(obj);
-
     setCopaPartidos(matches || []);
 
-    // === ESTADÍSTICAS GLOBALES (SÍ suman eliminatorias)
+    // ESTADÍSTICAS GLOBALES COPA (sí suman elim)
     const allMap = new Map();
     (teams || []).forEach((t) => {
       const st = (standings || []).find((s) => s.team_id === t.id);
@@ -235,28 +242,12 @@ function App() {
       const a = allMap.get(m.home_team);
       const b = allMap.get(m.away_team);
       if (!a || !b) return;
-      a.pj++;
-      b.pj++;
-      a.gf += m.home_score;
-      a.gc += m.away_score;
-      a.dg = a.gf - a.gc;
-      b.gf += m.away_score;
-      b.gc += m.home_score;
-      b.dg = b.gf - b.gc;
-      if (m.home_score > m.away_score) {
-        a.pg++;
-        a.pts += 2;
-        b.pp++;
-      } else if (m.home_score < m.away_score) {
-        b.pg++;
-        b.pts += 2;
-        a.pp++;
-      } else {
-        a.pe++;
-        b.pe++;
-        a.pts += 1;
-        b.pts += 1;
-      }
+      a.pj++; b.pj++;
+      a.gf += m.home_score; a.gc += m.away_score; a.dg = a.gf - a.gc;
+      b.gf += m.away_score; b.gc += m.home_score; b.dg = b.gf - b.gc;
+      if (m.home_score > m.away_score) { a.pg++; a.pts += 2; b.pp++; }
+      else if (m.home_score < m.away_score) { b.pg++; b.pts += 2; a.pp++; }
+      else { a.pe++; b.pe++; a.pts += 1; b.pts += 1; }
     });
     setCopaStatsAll(Array.from(allMap.values()));
   }
@@ -321,7 +312,6 @@ function App() {
       )}
 
       {path === "/admin" ? (
-        /* ==== ADMIN EVG con scope propio ==== */
         <div id="evg-scope">
           <AdminPageEVG
             onExit={() => {
@@ -331,7 +321,6 @@ function App() {
           />
         </div>
       ) : path === "/admin-copa" ? (
-        /* ==== ADMIN COPA con scope propio ==== */
         <div id="copa-scope">
           <AdminPanelCopa
             onExit={() => {
@@ -355,7 +344,6 @@ function App() {
           }}
         />
       ) : path === "/copa" ? (
-        /* ==== PUBLIC COPA con scope propio ==== */
         <div id="copa-scope">
           <nav className="tabs-nav">
             {[
@@ -404,7 +392,6 @@ function App() {
           {activeTabCOPA === "grupos" && <GruposCopa equipos={copaEquipos} />}
         </div>
       ) : (
-        /* ==== PUBLIC EVG con scope propio ==== */
         <div id="evg-scope">
           <nav className="tabs-nav">
             {[
@@ -453,6 +440,7 @@ function App() {
               statsView={statsViewEVG}
               setStatsView={setStatsViewEVG}
               logoFromName={(name) => `/logos/${slugify(name)}.png`}
+              statsRows={statsAllEVG} // suma grupos + eliminatoria
             />
           )}
 
