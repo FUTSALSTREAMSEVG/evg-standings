@@ -18,7 +18,7 @@ const Panel = ({ title, items }) => (
     <ul className="logos-5col" style={{ display:"grid", gridTemplateColumns:"repeat(5,minmax(0,1fr))", gap:10, listStyle:"none", margin:0, padding:0 }}>
       {items.map((t) => (
         <li key={t.id} style={{ background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.10)", borderRadius:10, display:"flex", alignItems:"center", justifyContent:"center", padding:10 }}>
-          <img className="logo-grid-img" src={t.logo_url || localWebp(t.name)} alt={`Logo ${t.name}`} data-name={t.name} onError={onErr} style={{ width:"100%", height:"auto", aspectRatio:"1/1", objectFit:"contain" }}/>
+          <img className="logo-grid-img"  key={`${t.id}-${t.logo_url || ""}`} src={t.logo_url || localWebp(t.name)} alt={`Logo ${t.name}`} data-name={t.name} onError={onErr} style={{ width:"100%", height:"auto", aspectRatio:"1/1", objectFit:"contain" }}/>
         </li>
       ))}
     </ul>

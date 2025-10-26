@@ -149,3 +149,14 @@
   box-shadow: 0 10px 24px rgba(0,0,0,0.50), inset 0 0 0 1px rgba(255,255,255,0.06);
 }
 #evg-scope .big-score{ white-space: nowrap; }
+
+/* === Winner glow para KO === */
+.winner-glow {
+  box-shadow: 0 0 0 2px rgba(241,127,38,0.9), 0 0 12px rgba(241,127,38,0.55);
+  border-radius: 50%;
+}
+.small-note {
+  font-size: 12px;
+  opacity: 0.9;
+  margin-top: 4px;
+}

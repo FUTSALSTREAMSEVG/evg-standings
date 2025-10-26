@@ -1,4 +1,3 @@
-// src/pages/copa/ProgramacionCopa.jsx
 import React, { useMemo, useState, useEffect } from "react";
 import PropTypes from "prop-types";
 
@@ -41,6 +40,19 @@ export default function ProgramacionCopa({ partidos, equipos, isLoading = false 
     h = h % 12 || 12;
     return `${h}:${m} ${ampm}`;
   };
+
+  // >>> NUEVO formato de fecha (sin sufijo de fase)
+  const labelFecha = (p) => {
+    const f = new Date(p.match_datetime);
+    const DIAS = ["DOMINGO","LUNES","MARTES","MIÉRCOLES","JUEVES","VIERNES","SÁBADO"];
+    const MESES = ["ENE","FEB","MAR","ABR","MAY","JUN","JUL","AGO","SEP","OCT","NOV","DIC"];
+    const dia = DIAS[f.getDay()];
+    const num = f.getDate();
+    const mes = MESES[f.getMonth()];
+    const anio = f.getFullYear();
+    return `${dia} ${num} / ${mes} / ${anio}`;
+  };
+  // <<< NUEVO
 
   // ===== ordenar por fecha/hora
   const partidosOrd = useMemo(
@@ -101,7 +113,6 @@ export default function ProgramacionCopa({ partidos, equipos, isLoading = false 
   const [scope, setScope] = useState("grupos"); // "grupos" | "elim"
   useEffect(() => setScope("grupos"), []);
 
-  // móviles verticales → lista con selectores extra
   const [isPortrait, setIsPortrait] = useState(false);
   useEffect(() => {
     const mq = window.matchMedia("(orientation: portrait)");
@@ -116,9 +127,7 @@ export default function ProgramacionCopa({ partidos, equipos, isLoading = false 
   useEffect(() => setFechaSel(fechas[fechas.length - 1] ?? ""), [fechas.join("|")]);
   useEffect(() => setFaseSel(fases[0] || ""), [fases.join("|")]);
 
-  // ===== estilos
   const LOGO = 96;
-
   const filaPartido = {
     display: "inline-flex",
     alignItems: "center",
@@ -133,190 +142,97 @@ export default function ProgramacionCopa({ partidos, equipos, isLoading = false 
     borderRadius: 10,
     fontWeight: 800,
     fontSize: 20,
-    letterSpacing: 0.3,
     textAlign: "center",
     background: "rgba(255,255,255,0.06)",
   };
-  const nombre = { fontSize: 15, fontWeight: 700, lineHeight: 1.1 };
+  const nombre = { fontSize: 15, fontWeight: 700 };
 
-  // Grid columnas tipo EVG
   const gridColsEVG = {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
     gap: 12,
-    alignItems: "start",
     width: "100%",
-    margin: 0,
-    padding: "0 8px",
   };
-
-  // 🔧 NUEVO: listas que estiran los ítems al 100% del ancho
-  const listGridFull = { listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 10, justifyItems: "stretch" };
+  const listGridFull = { listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 10 };
   const liFull = { width: "100%", textAlign: "center" };
 
   return (
     <section className="section-programacion" style={{ padding: "12px 8px" }}>
       <div className="center-max-1200">
-        {/* Selector principal */}
         <div style={{ display: "flex", gap: 10, justifyContent: "center", alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
           <label>Ver:</label>
           <select value={scope} onChange={(e) => setScope(e.target.value)}>
             <option value="grupos">Fase de grupos</option>
             <option value="elim" disabled={fases.length === 0}>Fase eliminatoria</option>
           </select>
-
-          {/* Controles extra SOLO en vertical */}
-          {isPortrait && scope === "grupos" && (
-            <>
-              <label>Fecha:</label>
-              <select value={fechaSel} onChange={(e) => setFechaSel(parseInt(e.target.value, 10))}>
-                {fechas.map((n) => (
-                  <option key={n} value={n}>{`Fecha ${n}`}</option>
-                ))}
-              </select>
-            </>
-          )}
-          {isPortrait && scope === "elim" && fases.length > 0 && (
-            <>
-              <label>Fase:</label>
-              <select value={faseSel} onChange={(e) => setFaseSel(e.target.value)}>
-                {fases.map((f) => (
-                  <option key={f} value={f}>{f}</option>
-                ))}
-              </select>
-            </>
-          )}
         </div>
 
         {isLoading ? (
           <p style={{ color: "#bbb", textAlign: "center" }}>Cargando…</p>
         ) : scope === "grupos" ? (
-          // ================== FASE DE GRUPOS ==================
           <>
-            {fechas.length === 0 ? (
-              <p style={{ color: "#bbb", textAlign: "center" }}>No hay fechas de grupos todavía.</p>
-            ) : isPortrait ? (
-              // --- VERTICAL: 1 columna (Fecha seleccionada) ---
-              <div className="panel" style={{ padding: 8 }}>
-                <h3 style={{ textAlign: "center", margin: "6px 0 10px" }}>{`FECHA ${fechaSel || ""}`}</h3>
-                <ul style={listGridFull}>
-                  {(juegosPorFecha.get(fechaSel) || []).map((p) => {
-                    const done = p.home_score != null && p.away_score != null;
-                    return (
-                      <li key={p.id} className="match-card hoverable" style={{ ...liFull, padding: 8 }}>
-                        <div style={{ display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap", marginBottom: 4 }}>
-                          <span className="badge badge-group">GRUPO {p.group_label}</span>
-                          <span className="badge badge-time">{hora(p.match_datetime)}</span>
-                        </div>
-                        <div style={filaPartido}>
-                          <img src={escudo(p.home_team)} alt={nombreEquipo(p.home_team)} style={{ width: LOGO, height: LOGO, objectFit: "contain" }} onError={(e) => onLogoError(e, p.home_team)} />
-                          <span style={nombre}>{nombreEquipo(p.home_team)}</span>
-                          <span style={scoreBox}>{done ? `${p.home_score} - ${p.away_score}` : "VS"}</span>
-                          <span style={nombre}>{nombreEquipo(p.away_team)}</span>
-                          <img src={escudo(p.away_team)} alt={nombreEquipo(p.away_team)} style={{ width: LOGO, height: LOGO, objectFit: "contain" }} onError={(e) => onLogoError(e, p.away_team)} />
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            ) : (
-              // --- HORIZONTAL: columnas por FECHA (layout EVG) ---
-              <div style={gridColsEVG}>
-                {fechas.map((n) => {
-                  const juegos = juegosPorFecha.get(n) || [];
-                  if (!juegos.length) return null;
-                  return (
-                    <section key={n} className="panel" style={{ padding: 8 }}>
-                      <h3 style={{ textAlign: "center", margin: "6px 0 10px" }}>{`FECHA ${n}`}</h3>
-                      <ul style={listGridFull}>
-                        {juegos.map((p) => {
-                          const done = p.home_score != null && p.away_score != null;
-                          return (
-                            <li key={p.id} className="match-card hoverable" style={{ ...liFull, padding: 8 }}>
-                              <div style={{ display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap", marginBottom: 4 }}>
-                                <span className="badge badge-group">GRUPO {p.group_label}</span>
-                                <span className="badge badge-time">{hora(p.match_datetime)}</span>
-                              </div>
-                              <div style={filaPartido}>
-                                <img src={escudo(p.home_team)} alt={nombreEquipo(p.home_team)} style={{ width: LOGO, height: LOGO, objectFit: "contain" }} onError={(e) => onLogoError(e, p.home_team)} />
-                                <span style={nombre}>{nombreEquipo(p.home_team)}</span>
-                                <span style={scoreBox}>{done ? `${p.home_score} - ${p.away_score}` : "VS"}</span>
-                                <span style={nombre}>{nombreEquipo(p.away_team)}</span>
-                                <img src={escudo(p.away_team)} alt={nombreEquipo(p.away_team)} style={{ width: LOGO, height: LOGO, objectFit: "contain" }} onError={(e) => onLogoError(e, p.away_team)} />
-                              </div>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </section>
-                  );
-                })}
-              </div>
-            )}
+            {fechas.map((n) => {
+              const juegos = juegosPorFecha.get(n) || [];
+              if (!juegos.length) return null;
+              return (
+                <section key={n} className="panel" style={{ padding: 8 }}>
+                  <h3 style={{ textAlign: "center", margin: "6px 0 10px" }}>{`FECHA ${n}`}</h3>
+                  <ul style={listGridFull}>
+                    {juegos.map((p) => {
+                      const done = p.home_score != null && p.away_score != null;
+                      return (
+                        <li key={p.id} className="match-card hoverable" style={{ ...liFull, padding: 8 }}>
+                          <div style={{ display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap", marginBottom: 4 }}>
+                            <span className="badge badge-group">GRUPO {p.group_label}</span>
+                            <span className="badge badge-time" style={{ background:"#fff", color:"#000", fontWeight:700 }}>{labelFecha(p)}</span>
+                            <span className="badge badge-time" style={{ background:"#ff6a00", color:"#fff", fontWeight:700 }}>{hora(p.match_datetime)}</span>
+                          </div>
+                          <div style={filaPartido}>
+                            <img src={escudo(p.home_team)} alt={nombreEquipo(p.home_team)} style={{ width: LOGO, height: LOGO }} onError={(e) => onLogoError(e, p.home_team)} />
+                            <span style={nombre}>{nombreEquipo(p.home_team)}</span>
+                            <span style={scoreBox}>{done ? `${p.home_score} - ${p.away_score}` : "VS"}</span>
+                            <span style={nombre}>{nombreEquipo(p.away_team)}</span>
+                            <img src={escudo(p.away_team)} alt={nombreEquipo(p.away_team)} style={{ width: LOGO, height: LOGO }} onError={(e) => onLogoError(e, p.away_team)} />
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              );
+            })}
           </>
         ) : (
-          // ================== FASE ELIMINATORIA ==================
           <>
-            {fases.length === 0 ? (
-              <p style={{ color: "#bbb", textAlign: "center" }}>No hay fases de eliminatoria todavía.</p>
-            ) : isPortrait ? (
-              // --- VERTICAL: 1 columna (Fase seleccionada) ---
-              <div className="panel" style={{ padding: 8 }}>
-                <h3 style={{ textAlign: "center", margin: "6px 0 10px" }}>{faseSel}</h3>
-                <ul style={listGridFull}>
-                  {(juegosPorFase.get(faseSel) || []).map((p) => {
-                    const done = p.home_score != null && p.away_score != null;
-                    return (
-                      <li key={p.id} className="match-card hoverable" style={{ ...liFull, padding: 8 }}>
-                        <div style={{ display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap", marginBottom: 4 }}>
-                          <span className="badge badge-time">{hora(p.match_datetime)}</span>
-                        </div>
-                        <div style={filaPartido}>
-                          <img src={escudo(p.home_team)} alt={nombreEquipo(p.home_team)} style={{ width: LOGO, height: LOGO, objectFit: "contain" }} onError={(e) => onLogoError(e, p.home_team)} />
-                          <span style={nombre}>{nombreEquipo(p.home_team)}</span>
-                          <span style={scoreBox}>{done ? `${p.home_score} - ${p.away_score}` : "VS"}</span>
-                          <span style={nombre}>{nombreEquipo(p.away_team)}</span>
-                          <img src={escudo(p.away_team)} alt={nombreEquipo(p.away_team)} style={{ width: LOGO, height: LOGO, objectFit: "contain" }} onError={(e) => onLogoError(e, p.away_team)} />
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            ) : (
-              // --- HORIZONTAL: columnas por FASE (layout EVG) ---
-              <div style={gridColsEVG}>
-                {fases.map((fase) => {
-                  const juegos = juegosPorFase.get(fase) || [];
-                  if (!juegos.length) return null;
-                  return (
-                    <section key={fase} className="panel" style={{ padding: 8 }}>
-                      <h3 style={{ textAlign: "center", margin: "6px 0 10px" }}>{fase}</h3>
-                      <ul style={listGridFull}>
-                        {juegos.map((p) => {
-                          const done = p.home_score != null && p.away_score != null;
-                          return (
-                            <li key={p.id} className="match-card hoverable" style={{ ...liFull, padding: 8 }}>
-                              <div style={{ display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap", marginBottom: 4 }}>
-                                <span className="badge badge-time">{hora(p.match_datetime)}</span>
-                              </div>
-                              <div style={filaPartido}>
-                                <img src={escudo(p.home_team)} alt={nombreEquipo(p.home_team)} style={{ width: LOGO, height: LOGO, objectFit: "contain" }} onError={(e) => onLogoError(e, p.home_team)} />
-                                <span style={nombre}>{nombreEquipo(p.home_team)}</span>
-                                <span style={scoreBox}>{done ? `${p.home_score} - ${p.away_score}` : "VS"}</span>
-                                <span style={nombre}>{nombreEquipo(p.away_team)}</span>
-                                <img src={escudo(p.away_team)} alt={nombreEquipo(p.away_team)} style={{ width: LOGO, height: LOGO, objectFit: "contain" }} onError={(e) => onLogoError(e, p.away_team)} />
-                              </div>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </section>
-                  );
-                })}
-              </div>
-            )}
+            {fases.map((fase) => {
+              const juegos = juegosPorFase.get(fase) || [];
+              if (!juegos.length) return null;
+              return (
+                <section key={fase} className="panel" style={{ padding: 8 }}>
+                  <h3 style={{ textAlign: "center", margin: "6px 0 10px" }}>{fase}</h3>
+                  <ul style={listGridFull}>
+                    {juegos.map((p) => {
+                      const done = p.home_score != null && p.away_score != null;
+                      return (
+                        <li key={p.id} className="match-card hoverable" style={{ ...liFull, padding: 8 }}>
+                          <div style={{ display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap", marginBottom: 4 }}>
+                            <span className="badge badge-time" style={{ background:"#fff", color:"#000", fontWeight:700 }}>{labelFecha(p)}</span>
+                            <span className="badge badge-time" style={{ background:"#ff6a00", color:"#fff", fontWeight:700 }}>{hora(p.match_datetime)}</span>
+                          </div>
+                          <div style={filaPartido}>
+                            <img src={escudo(p.home_team)} alt={nombreEquipo(p.home_team)} style={{ width: LOGO, height: LOGO }} onError={(e) => onLogoError(e, p.home_team)} />
+                            <span style={nombre}>{nombreEquipo(p.home_team)}</span>
+                            <span style={scoreBox}>{done ? `${p.home_score} - ${p.away_score}` : "VS"}</span>
+                            <span style={nombre}>{nombreEquipo(p.away_team)}</span>
+                            <img src={escudo(p.away_team)} alt={nombreEquipo(p.away_team)} style={{ width: LOGO, height: LOGO }} onError={(e) => onLogoError(e, p.away_team)} />
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              );
+            })}
           </>
         )}
       </div>

@@ -12,6 +12,8 @@ import Programacion from "./pages/Programacion.jsx";
 import Grupos from "./pages/Grupos.jsx";
 import AdminPageEVG from "./pages/AdminPanel.jsx";
 import DetalleEquipo from "./pages/DetalleEquipo.jsx";
+// ⬇️ NUEVO: usamos tu Repechaje existente
+import Repechaje from "./pages/Repechaje.jsx";
 
 // COPA
 import TablasCopa from "./pages/copa/TablasCopa.jsx";
@@ -36,6 +38,9 @@ function App() {
   const [activeTabEVG, setActiveTabEVG] = useState("tablas");
   const [showLanding, setShowLanding] = useState(true);
   const [statsAllEVG, setStatsAllEVG] = useState([]); // global (grupos + elim)
+
+  // ⬇️ NUEVO: sub-pestaña dentro de "Posiciones"
+  const [posViewEVG, setPosViewEVG] = useState("tabla"); // "tabla" | "repechaje"
 
   // COPA
   const [copaEquipos, setCopaEquipos] = useState([]);
@@ -112,7 +117,7 @@ function App() {
     });
     (matches || []).forEach((m) => {
       if (m.home_score == null || m.away_score == null) return;
-      if (m.phase_type === "elim") return; // <- clave: NO sumar a posiciones
+      if (m.phase_type === "elim") return; // <- NO sumar a posiciones
       const g = map.get((m.group_label || "A").toUpperCase());
       if (!g) return;
       const a = g.find((t) => t.team_id === m.home_team);
@@ -167,11 +172,23 @@ function App() {
     recargarCOPA();
     const ch = supabase
       .channel("realtime-copa-public")
-      .on("postgres_changes", { event: "*", schema: "public", table: "copa_matches" }, recargarCOPA)
-      .on("postgres_changes", { event: "*", schema: "public", table: "copa_teams" }, recargarCOPA)
-      .on("postgres_changes", { event: "*", schema: "public", table: "copa_initial_standings" }, recargarCOPA)
+      .on("postgres_changes", { event: "*", schema: "public", table: "copa_matches" }, () => recargarCOPA())
+      .on("postgres_changes", { event: "*", schema: "public", table: "copa_teams" }, () => recargarCOPA())
+      .on("postgres_changes", { event: "*", schema: "public", table: "copa_initial_standings" }, () => recargarCOPA())
+      .on("postgres_changes", { event: "*", schema: "public", table: "copa_groups" }, () => recargarCOPA())
+      .on("postgres_changes", { event: "*", schema: "public", table: "copa_phases" }, () => recargarCOPA())
       .subscribe();
-    return () => { try { supabase.removeChannel(ch); } catch {} };
+
+    // Fallback de seguridad: si por alguna razón no llega el evento realtime,
+    // hacemos un ping cada 10s para mantener sincronizado.
+    const timer = setInterval(() => {
+      recargarCOPA();
+    }, 10000);
+
+    return () => {
+      try { supabase.removeChannel(ch); } catch {}
+      clearInterval(timer);
+    };
   }, []);
 
   async function recargarCOPA() {
@@ -411,24 +428,57 @@ function App() {
           </nav>
 
           {activeTabEVG === "tablas" && (
-            <Tablas
-              grupoA={grupoA}
-              grupoB={grupoB}
-              ordenarTabla={(tabla) =>
-                [...tabla].sort(
-                  (a, b) =>
-                    b.pts - a.pts || b.dg - a.dg || b.pg - a.pg || b.gf - a.gf
-                )
-              }
-              logoFromName={(name) => `/logos/${slugify(name)}.png`}
-              setEquipoDetalleId={() => {}}
-              setEquipoDetalleNombre={() => {}}
-              prevScrollRef={{ current: 0 }}
-              layout={{ stacked: false }}
-              leftWrapRef={{ current: null }}
-              rightWrapRef={{ current: null }}
-              commonHeight={null}
-            />
+            <>
+              {/* ⬇️ conmutador interno SOLO dentro de "Posiciones" */}
+              <nav className="tabs-nav" style={{ marginTop: 8 }}>
+                <button
+                  className={`tab-btn ${posViewEVG === "tabla" ? "active" : ""}`}
+                  onClick={() => setPosViewEVG("tabla")}
+                >
+                  POSICIONES
+                </button>
+                <button
+                  className={`tab-btn ${posViewEVG === "repechaje" ? "active" : ""}`}
+                  onClick={() => setPosViewEVG("repechaje")}
+                >
+                  REPECHAJE
+                </button>
+              </nav>
+
+              {posViewEVG === "tabla" ? (
+                <Tablas
+                  grupoA={grupoA}
+                  grupoB={grupoB}
+                  ordenarTabla={(tabla) =>
+                    [...tabla].sort(
+                      (a, b) =>
+                        b.pts - a.pts || b.dg - a.dg || b.pg - a.pg || b.gf - a.gf
+                    )
+                  }
+                  logoFromName={(name) => `/logos/${slugify(name)}.png`}
+                  setEquipoDetalleId={() => {}}
+                  setEquipoDetalleNombre={() => {}}
+                  prevScrollRef={{ current: 0 }}
+                  layout={{ stacked: false }}
+                  leftWrapRef={{ current: null }}
+                  rightWrapRef={{ current: null }}
+                  commonHeight={null}
+                />
+              ) : (
+                <Repechaje
+                  grupoA={grupoA}
+                  grupoB={grupoB}
+                  equipos={equiposEVG}
+                  partidos={partidosEVG}
+                  ordenarTabla={(tabla) =>
+                    [...tabla].sort(
+                      (a, b) =>
+                        b.pts - a.pts || b.dg - a.dg || b.pg - a.pg || b.gf - a.gf
+                    )
+                  }
+                />
+              )}
+            </>
           )}
 
           {activeTabEVG === "grupos" && <Grupos equipos={equiposEVG} />}

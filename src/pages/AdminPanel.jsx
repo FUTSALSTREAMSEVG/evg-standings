@@ -62,6 +62,10 @@ export default function AdminPanel({ onExit }) {
   const [fecha, setFecha] = useState("");
   const [hora, setHora] = useState("");
 
+  // === AÑADIDOS PARA KO: ida/vuelta + identificador de serie
+  const [leg, setLeg] = useState("");            // "", "ida", "vuelta"
+  const [seriesKey, setSeriesKey] = useState(""); // ej. OCT-L1
+
   // edición partido (inline)
   const [editando, setEditando] = useState(null);
   const [editDraft, setEditDraft] = useState(null);
@@ -93,7 +97,6 @@ export default function AdminPanel({ onExit }) {
       setPartidos(m || []);
       setPosiciones(s || []);
 
-      // SOLO en el primer load fijamos un default, luego no tocamos la elección del usuario
       if (!didInitFilters.current) {
         const { feSemanas } = computeFEWeeks(m || []);
         const semanasGrupos = Array.from(new Set((m || []).map(x => x.week_number).filter(n => typeof n === "number"))).sort((a,b)=>a-b);
@@ -103,7 +106,6 @@ export default function AdminPanel({ onExit }) {
         else if (typeof lastW === "number") setSelector(`S:${lastW}`);
         didInitFilters.current = true;
       } else {
-        // mantener selector actual; si desaparece la opción, elegimos un fallback coherente
         const { feSemanas } = computeFEWeeks(m || []);
         if (selector.startsWith("FEW:")) {
           const n = parseInt(selector.slice(4), 10);
@@ -178,7 +180,8 @@ export default function AdminPanel({ onExit }) {
     const t2 = equipos.find((t) => t.name === equipo2);
     if (!t1 || !t2) return;
 
-    if (yaJugaron(t1.id, t2.id)) {
+    // en KO permitimos ida/vuelta entre mismos equipos; en grupos se bloquea
+    if (tipoPartido !== "elim" && yaJugaron(t1.id, t2.id)) {
       alert("Estos equipos ya jugaron entre sí.");
       return;
     }
@@ -192,11 +195,19 @@ export default function AdminPanel({ onExit }) {
       phaseType = "elim";
       const f = (faseSel || "").trim() || (faseName || "").trim();
       if (!f) {
-        alert("Ponle un nombre a la fase (ej: Cuartos de final).");
+        alert("Ponle un nombre a la fase (ej: Octavos, Cuartos, Semis, Final).");
         return;
       }
       phase = f;
-      payloadExtra = { group_label: null, week_number: null };
+      payloadExtra = {
+        group_label: null,
+        week_number: null,
+        leg: (leg || null),
+        series_key: (seriesKey || null),
+        // penales NO se setean al crear, quedan null
+        pen_home: null,
+        pen_away: null,
+      };
     } else {
       payloadExtra = { group_label: grupo, week_number: Number(semana) || null };
     }
@@ -219,8 +230,9 @@ export default function AdminPanel({ onExit }) {
       return;
     }
 
-    // limpiar form mínimos (no tocamos selector)
+    // limpiar formularios (incluye KO)
     setEquipo1(""); setEquipo2(""); setFecha(""); setHora("");
+    setLeg(""); setSeriesKey(""); // <-- limpiar ida/vuelta + serie
     if (tipoPartido === "elim" && faseName.trim()) setFaseName(faseName.trim());
 
     await recargarTodo(); // mantiene el selector vigente
@@ -491,12 +503,11 @@ export default function AdminPanel({ onExit }) {
                         ))}
                     </select>
                     <input
-                      placeholder="o escribe un nombre (ej: Cuartos de final)"
+                      placeholder="o escribe un nombre (ej: Octavos, Cuartos)"
                       value={faseName}
                       onChange={(e) => setFaseName(e.target.value)}
                       style={{ minWidth: 260 }}
                     />
-                    {/* ✏️ EDITAR NOMBRE INLINE */}
                     <button
                       title="Renombrar fase seleccionada al nuevo nombre"
                       onClick={renombrarFaseInline}
@@ -505,6 +516,22 @@ export default function AdminPanel({ onExit }) {
                     >
                       ✏️ Editar nombre
                     </button>
+
+                    {/* Ida/Vuelta + Serie */}
+                    <label>Ida/Vuelta:</label>
+                    <select value={leg} onChange={(e)=>setLeg(e.target.value)} style={{ minWidth: 110 }}>
+                      <option value="">—</option>
+                      <option value="ida">Ida</option>
+                      <option value="vuelta">Vuelta</option>
+                    </select>
+
+                    <label title="Clave para enlazar ida y vuelta">Serie:</label>
+                    <input
+                      value={seriesKey}
+                      onChange={(e)=>setSeriesKey(e.target.value)}
+                      placeholder="ej. OCT-L1"
+                      style={{ minWidth: 120 }}
+                    />
                   </>
                 )}
               </div>
@@ -599,6 +626,8 @@ export default function AdminPanel({ onExit }) {
                                   </>
                                 )}
                               </span>
+                              {p.leg && <span style={chipMeta}><span style={{ color: ORANGE, fontWeight: 900 }}>LEG</span>&nbsp;{p.leg.toUpperCase()}</span>}
+                              {p.series_key && <span style={chipMeta}><span style={{ color: ORANGE, fontWeight: 900 }}>SERIE</span>&nbsp;{p.series_key}</span>}
                             </div>
 
                             {/* Logos + marcador + nombres (compacto) */}
@@ -640,6 +669,13 @@ export default function AdminPanel({ onExit }) {
                                 <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
                                   <input type="number" placeholder="Home" value={editDraft.home_score ?? ""} onChange={(e) => setEditDraft((d) => ({ ...d, home_score: e.target.value }))} />
                                   <input type="number" placeholder="Away" value={editDraft.away_score ?? ""} onChange={(e) => setEditDraft((d) => ({ ...d, away_score: e.target.value }))} />
+                                  {/* Penales SOLO visible si es vuelta */}
+                                  {editDraft.leg === "vuelta" && (
+                                    <>
+                                      <input type="number" placeholder="Pen. Home" value={editDraft.pen_home ?? ""} onChange={(e) => setEditDraft((d) => ({ ...d, pen_home: e.target.value }))} />
+                                      <input type="number" placeholder="Pen. Away" value={editDraft.pen_away ?? ""} onChange={(e) => setEditDraft((d) => ({ ...d, pen_away: e.target.value }))} />
+                                    </>
+                                  )}
                                   <input type="date" value={editDraft.edit_date || ""} onChange={(e) => setEditDraft((d) => ({ ...d, edit_date: e.target.value }))} />
                                   <input type="time" value={editDraft.edit_time || ""} onChange={(e) => setEditDraft((d) => ({ ...d, edit_time: e.target.value }))} />
                                   <input type="number" value={editDraft.week_number ?? ""} placeholder="Semana (solo grupos)" onChange={(e) => setEditDraft((d) => ({ ...d, week_number: e.target.value }))} />
@@ -652,6 +688,13 @@ export default function AdminPanel({ onExit }) {
                                       const payload = {
                                         home_score: editDraft.home_score === "" ? null : Number(editDraft.home_score),
                                         away_score: editDraft.away_score === "" ? null : Number(editDraft.away_score),
+                                        // SOLO guardamos penales si es VUELTA; si no, forzamos null
+                                        pen_home: editDraft.leg === "vuelta"
+                                          ? (editDraft.pen_home === "" ? null : Number(editDraft.pen_home))
+                                          : null,
+                                        pen_away: editDraft.leg === "vuelta"
+                                          ? (editDraft.pen_away === "" ? null : Number(editDraft.pen_away))
+                                          : null,
                                         played: editDraft.home_score !== "" && editDraft.away_score !== "",
                                         match_datetime: iso,
                                         week_number: editDraft.phase_type === "elim" ? null : (Number(editDraft.week_number) || null),

@@ -13,18 +13,18 @@ const slugify = (s) =>
 
 // --- Helpers ISO week (lunes-domingo)
 function isoWeekInfo(dIn) {
-  // basado en ISO-8601: semana 1 es la que contiene el jueves de ese año
   const d = new Date(Date.UTC(dIn.getFullYear(), dIn.getMonth(), dIn.getDate()));
-  // día de la semana (1..7) con lunes=1
   const dayNum = (d.getUTCDay() + 6) % 7 + 1;
-  // mover a jueves de esa semana
   d.setUTCDate(d.getUTCDate() + (4 - dayNum));
-  // primer día del año ISO (jueves de la semana 1)
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
   const weekNo = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
   const isoYear = d.getUTCFullYear();
   return { isoYear, weekNo, key: `${isoYear}-W${String(weekNo).padStart(2, "0")}` };
 }
+
+// texto de penales (solo visual)
+const penText = (p) =>
+  p?.pen_home != null && p?.pen_away != null ? `( ${p.pen_home} – ${p.pen_away} pen. )` : null;
 
 export default function Programacion({ partidos, equipos, isLoading = false, isAdmin = false }) {
   // ===== helpers =====
@@ -81,10 +81,10 @@ export default function Programacion({ partidos, equipos, isLoading = false, isA
     return Array.from(s).sort((a, b) => a - b);
   }, [partidosOrd]);
 
-  // ===== FE por semana ISO: construimos índices 1..N para selector =====
+  // ===== FE por semana ISO =====
   const feSemanaMap = useMemo(() => {
     const keys = [];
-    const byKey = new Map(); // key ISO -> array matches
+    const byKey = new Map();
     for (const p of partidosOrd) {
       if (p.phase_type === "elim" && p.match_datetime) {
         const { key } = isoWeekInfo(new Date(p.match_datetime));
@@ -95,8 +95,7 @@ export default function Programacion({ partidos, equipos, isLoading = false, isA
         byKey.get(key).push(p);
       }
     }
-    keys.sort((a, b) => a.localeCompare(b)); // cronológico
-    // armamos índice: 0..N-1 -> key
+    keys.sort((a, b) => a.localeCompare(b));
     const indexToKey = keys;
     const keyToIndex = new Map(keys.map((k, i) => [k, i]));
     return { indexToKey, keyToIndex, byKey };
@@ -104,14 +103,13 @@ export default function Programacion({ partidos, equipos, isLoading = false, isA
 
   const feSemanas = useMemo(() => feSemanaMap.indexToKey.map((_, i) => i + 1), [feSemanaMap]);
 
-  // ===== selección por defecto: última FE por semana si existe; sino última semana grupos =====
+  // ===== selección por defecto =====
   const defaultSelector = useMemo(() => {
-    if (feSemanas.length > 0) return `FEW:${feSemanas[feSemanas.length - 1]}`; // Fase Eliminatoria por Semana
+    if (feSemanas.length > 0) return `FEW:${feSemanas[feSemanas.length - 1]}`;
     const w = semanas[semanas.length - 1];
     return typeof w === "number" ? `S:${w}` : "";
   }, [feSemanas, semanas]);
 
-  // 👉 Solo seteamos por defecto UNA VEZ (no se resetea)
   const [selector, setSelector] = useState("");
   const didInit = useRef(false);
   useEffect(() => {
@@ -121,7 +119,6 @@ export default function Programacion({ partidos, equipos, isLoading = false, isA
     }
   }, [defaultSelector]);
 
-  // Si la selección deja de existir, fallback
   useEffect(() => {
     if (!selector) return;
     if (selector.startsWith("FEW:")) {
@@ -133,7 +130,7 @@ export default function Programacion({ partidos, equipos, isLoading = false, isA
     }
   }, [selector, feSemanas.length, semanas.join("|"), defaultSelector]);
 
-  // ===== detectar orientación para adaptar columnas =====
+  // ===== detectar orientación =====
   const [isPortrait, setIsPortrait] = useState(false);
   useEffect(() => {
     const mq = window.matchMedia("(orientation: portrait)");
@@ -159,7 +156,7 @@ export default function Programacion({ partidos, equipos, isLoading = false, isA
     return [];
   }, [selector, partidosOrd, feSemanaMap]);
 
-  // ===== agrupar en columnas por DÍA  =====
+  // ===== agrupar por día =====
   const gruposPorDia = useMemo(() => {
     const g = new Map();
     for (const p of listaFiltrada) {
@@ -177,8 +174,8 @@ export default function Programacion({ partidos, equipos, isLoading = false, isA
   const gridColsStyle = {
     display: "grid",
     gridTemplateColumns: isPortrait
-      ? "repeat(auto-fit, minmax(220px, 1fr))"
-      : "repeat(auto-fit, minmax(260px, 1fr))",
+      ? "repeat(2, minmax(0, 1fr))"                 // ➜ vertical: 2 columnas fijas
+      : "repeat(auto-fit, minmax(220px, 1fr))",     // ➜ horizontal: se encogen para evitar scroll
     gap: 12,
     alignItems: "start",
     justifyItems: "stretch",
@@ -266,7 +263,7 @@ export default function Programacion({ partidos, equipos, isLoading = false, isA
   return (
     <section className="section-programacion" style={{ padding: "12px 8px" }}>
       <div className="center-max-1200" style={{ maxWidth: "100%", overflow: "hidden" }}>
-        {/* SELECTOR CENTRADO (arriba del título) */}
+        {/* SELECTOR CENTRADO */}
         <div style={{ display: "flex", justifyContent: "center", gap: 8, alignItems: "center", margin: "4px auto 6px auto", flexWrap: "wrap" }}>
           <span>Ver:</span>
           <select value={selector} onChange={(e) => setSelector(e.target.value)}>
@@ -345,7 +342,12 @@ export default function Programacion({ partidos, equipos, isLoading = false, isA
                           {/* Logos + marcador */}
                           <div className="logos-row" style={filaGrid}>
                             <img src={escudo(p.home_team)} alt={nombreEquipo(p.home_team)} style={logoStyle} onError={(e) => onLogoError(e, p.home_team)} />
-                            <div className="big-score" style={scoreBox}>{haveScore ? `${p.home_score} - ${p.away_score}` : "VS"}</div>
+                            <div className="big-score" style={scoreBox}>
+                              {haveScore ? `${p.home_score} - ${p.away_score}` : "VS"}
+                              {isElim && penText(p) && (
+                                <div style={{ fontSize: 12, marginTop: 4, opacity: 0.95 }}>{penText(p)}</div>
+                              )}
+                            </div>
                             <img src={escudo(p.away_team)} alt={nombreEquipo(p.away_team)} style={logoStyle} onError={(e) => onLogoError(e, p.away_team)} />
                           </div>
 
@@ -365,7 +367,6 @@ export default function Programacion({ partidos, equipos, isLoading = false, isA
           </div>
         )}
 
-        {/* ayuda admin si no hay equipos */}
         {!isLoading && (equipos?.length ?? 0) === 0 && isAdmin && (
           <div style={{ textAlign: "center", marginTop: 12 }}>
             <a href="/admin">
