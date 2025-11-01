@@ -1,6 +1,7 @@
 // src/pages/copa/TablasCopa.jsx
 import React, { useEffect, useState } from "react";
 import PropTypes from "prop-types";
+import { supabase } from "../../supabaseClient";
 
 /** Tabla de posiciones multi-grupo (A..E) */
 export default function TablasCopa({ grupos, ordenarTabla, getLogo, onOpenEquipo }) {
@@ -35,13 +36,70 @@ export default function TablasCopa({ grupos, ordenarTabla, getLogo, onOpenEquipo
     return 14;                   // normal
   };
 
+  // ====== Partidos para H2H (solo fase de grupos) ======
+  const [matches, setMatches] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { data } = await supabase
+        .from("copa_matches")
+        .select("id,home_team,away_team,home_score,away_score,phase_type,match_datetime")
+        .order("match_datetime", { ascending: false });
+      if (alive) setMatches(data || []);
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // Puntos 2-1-0 (desde PG/PE)
+  const pts210 = (row) => (row.pg || 0) * 2 + (row.pe || 0) * 1;
+
+  // H2H: último partido de grupos entre a y b (ganador arriba). Empate o sin partido => 0.
+  const h2h = (a, b) => {
+    const cand = (matches || []).filter(
+      (m) =>
+        m.phase_type !== "elim" &&
+        ((m.home_team === a.team_id && m.away_team === b.team_id) ||
+         (m.home_team === b.team_id && m.away_team === a.team_id))
+    );
+    if (!cand.length) return 0;
+    const m = cand[0]; // más reciente
+    if (m.home_score == null || m.away_score == null) return 0;
+    if (m.home_score === m.away_score) return 0;
+    const aEsLocal = m.home_team === a.team_id;
+    const ganoA = aEsLocal ? m.home_score > m.away_score : m.away_score > m.home_score;
+    return ganoA ? 1 : -1; // 1 => a por encima
+  };
+
+  // “Sorteo” determinístico para empates totales (estable)
+  const stableTie = (a, b) => {
+    const A = String(a.team_id) + a.equipo;
+    const B = String(b.team_id) + b.equipo;
+    let ha = 0, hb = 0;
+    for (let i = 0; i < A.length; i++) ha = (ha * 31 + A.charCodeAt(i)) | 0;
+    for (let i = 0; i < B.length; i++) hb = (hb * 31 + B.charCodeAt(i)) | 0;
+    return ha - hb;
+  };
+
+  // Orden: PTS(2-1-0) → H2H → DG → GF → PG → sorteo
+  const ordenarTablaConReglas = (arr) =>
+    [...arr].sort((a, b) => {
+      const pa = pts210(a), pb = pts210(b);
+      if (pb !== pa) return pb - pa;               // 1) Puntos 2-1-0
+      const hh = h2h(a, b);                        // 2) H2H (partido entre ellos)
+      if (hh !== 0) return -hh;                    // (1 => a arriba)
+      if (b.dg !== a.dg) return b.dg - a.dg;       // 3) Diferencia de gol
+      if (b.gf !== a.gf) return b.gf - a.gf;       // 4) Goles a favor
+      if (b.pg !== a.pg) return b.pg - a.pg;       // 5) Partidos ganados
+      return stableTie(a, b);                      // 6) Sorteo
+    });
+
   const TablaGrupo = ({ code, data }) => (
-    <div className="panel panel--tabla-grupo">
+    <div className="panel panel--tabla-grupo" style={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <h2 className="tabla-grupo-title">Grupo {code}</h2>
 
       <table
         className="compacta compacta--pos"
-        style={{ width: "100%", tableLayout: "fixed", borderCollapse: "collapse" }}
+        style={{ width: "100%", tableLayout: "fixed", borderCollapse: "collapse", flex: 1 }}
       >
         {/* Usamos porcentajes para que todo se adapte sin scroll */}
         <colgroup>
@@ -74,7 +132,7 @@ export default function TablasCopa({ grupos, ordenarTabla, getLogo, onOpenEquipo
         </thead>
 
         <tbody>
-          {ordenarTabla(data).map((t, i) => {
+          {ordenarTablaConReglas(data).map((t, i) => {
             const logo = getLogo(t.team_id, t.equipo);
             const fs = fontSizeForName(t.equipo);
 
@@ -129,7 +187,8 @@ export default function TablasCopa({ grupos, ordenarTabla, getLogo, onOpenEquipo
                   </td>
                 )}
 
-                <td>{t.pts}</td><td>{t.pj}</td><td>{t.pg}</td><td>{t.pe}</td><td>{t.pp}</td>
+                {/* PTS mostrados con la regla 2-1-0 */}
+                <td>{pts210(t)}</td><td>{t.pj}</td><td>{t.pg}</td><td>{t.pe}</td><td>{t.pp}</td>
                 <td>{t.gf}</td><td>{t.gc}</td><td>{t.dg}</td>
               </tr>
             );
@@ -141,7 +200,15 @@ export default function TablasCopa({ grupos, ordenarTabla, getLogo, onOpenEquipo
 
   const groupCodes = Object.keys(grupos).sort(); // ['A','B',...]
   return (
-    <div id="copa-posiciones" className="tables-grid tables-grid--copa">
+    <div
+      id="copa-posiciones"
+      className="tables-grid tables-grid--copa"
+      style={{
+        // asegura alturas iguales por fila
+        gridAutoRows: "1fr",
+        alignItems: "stretch",
+      }}
+    >
       {groupCodes.map((code) => (
         <TablaGrupo key={code} code={code} data={grupos[code]} />
       ))}
